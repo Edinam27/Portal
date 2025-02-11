@@ -3484,18 +3484,18 @@ def student_portal():
                     col1, col2 = st.columns(2)
 
                     with col1:
-                        st.write(f"**Programme:** {registration[2]}")
-                        st.write(f"**Level:** {registration[4]}")
-                        st.write(f"**Session:** {registration[5]}")
+                        st.write(f"**Programme:** {registration[3]}")
+                        st.write(f"**Level:** {registration[5]}")
+                        st.write(f"**Session:** {registration[6]}")
 
                     with col2:
                         st.write(f"**Academic Year:** {registration[6]}")
                         st.write(f"**Semester:** {registration[7]}")
-                        st.write(f"**Total Credits:** {registration[9]}")
+                        st.write(f"**Total Credits:** {registration[10]}")
 
                     st.write("**Selected Courses**")
-                    if registration[8]:  # courses
-                        courses_list = registration[8].split("\n")
+                    if registration[9]:  # courses
+                        courses_list = registration[9].split("\n")
                         for course in courses_list:
                             if "|" in course:
                                 code, title, credits = course.split("|")
@@ -3506,17 +3506,7 @@ def student_portal():
                         if os.path.exists(registration[13]):
                             st.write(f"[View Receipt]({registration[13]})")
 
-                    if st.button(
-                        "Download Registration Form", key=f"dl_reg_{registration[0]}"
-                    ):
-                        pdf_file = generate_course_registration_pdf(registration)
-                        with open(pdf_file, "rb") as f:
-                            st.download_button(
-                                "Download PDF",
-                                f,
-                                file_name=f"registration_{registration[0]}.pdf",
-                                mime="application/pdf",
-                            )
+
         else:
             st.info("No course registrations found.")
 
