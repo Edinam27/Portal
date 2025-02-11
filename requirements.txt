@@ -6,3 +6,4 @@ reportlab
 plotly
 openpyxl
 fitz
+PyMuPDF
