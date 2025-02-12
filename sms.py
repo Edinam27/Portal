@@ -3308,7 +3308,7 @@ def student_login_form():
         student_id = st.text_input("Student ID")
     with col2:
         password = st.text_input(
-            "Password",
+            "Password (Birthday eg.'YYYY-MM-DD')",
             type="password",
             help="Default password is your date of birth (YYYY-MM-DD)",
         )
