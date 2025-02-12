@@ -659,7 +659,7 @@ def generate_student_info_pdf(data):
     header_data = [
         [
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
-            Paragraph("UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA", styles["CustomTitle"]),
+            Paragraph("UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>IPS DIRECTORATE", styles["CustomTitle"]),
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     ]
@@ -885,7 +885,7 @@ def generate_course_registration_pdf(data):
 
     header_elements.extend(
         [
-            Paragraph("UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA", styles["CustomTitle"]),
+            Paragraph("UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>Proof of Registration", styles["CustomTitle"]),
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     )
@@ -1746,14 +1746,21 @@ def manage_database():
 def upload_data_from_excel_and_docs():
     """
     Bulk upload function updated to accept two Excel files:
-      - One for student information (ignoring any programme data)
+      - One for student information (now preserving document path values if provided)
       - One for course registration data (authoritative for programme and other registration data)
     Optionally uploads a zip file for related documents. 
-    Now, the zip file is simply saved to the uploads folder as-is.
+    The zip file is saved to the uploads folder as-is.
     """
+    import pandas as pd
+    import sqlite3
+    import os
+    import shutil
+    import streamlit as st
+    from datetime import datetime
+
     st.header("Bulk Upload Data from Excel & Documents")
 
-    # Use two file uploaders, one for student info and one for course registration
+    # Use two file uploaders: one for student info and one for course registration data.
     st.markdown("### Excel Files Upload")
     col1, col2 = st.columns(2)
     with col1:
@@ -1779,15 +1786,20 @@ def upload_data_from_excel_and_docs():
             return
 
         try:
-            # Read the two Excel files
+            # Read the two Excel files.
             student_df = pd.read_excel(student_excel)
             reg_df = pd.read_excel(reg_excel)
 
             conn = sqlite3.connect("student_registration.db")
             c = conn.cursor()
 
-            # Insert student data
-            # Note: We ignore 'programme' from the student file.
+            # Updated: Insert student data including document path fields.
+            # Expected Excel columns: student_id, surname, other_names, date_of_birth, place_of_birth,
+            # home_town, residential_address, postal_address, email, telephone, ghana_card_id, nationality,
+            # marital_status, gender, religion, denomination, disability_status, disability_description,
+            # guardian_name, guardian_relationship, guardian_occupation, guardian_address, guardian_telephone,
+            # previous_school, qualification_type, completion_year, aggregate_score,
+            # ghana_card_path, passport_photo_path, transcript_path, certificate_path, receipt_path.
             insert_student_query = """
                 INSERT OR IGNORE INTO student_info (
                     student_id, surname, other_names, date_of_birth, place_of_birth,
@@ -1796,8 +1808,10 @@ def upload_data_from_excel_and_docs():
                     denomination, disability_status, disability_description,
                     guardian_name, guardian_relationship, guardian_occupation,
                     guardian_address, guardian_telephone, previous_school,
-                    qualification_type, completion_year, aggregate_score, programme
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    qualification_type, completion_year, aggregate_score,
+                    ghana_card_path, passport_photo_path, transcript_path, certificate_path, receipt_path,
+                    programme
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """
             for _, row in student_df.iterrows():
                 params = (
@@ -1828,11 +1842,16 @@ def upload_data_from_excel_and_docs():
                     row.get("qualification_type"),
                     row.get("completion_year"),
                     row.get("aggregate_score"),
-                    "",  # Programme will be updated from course registration data
+                    row.get("ghana_card_path"),
+                    row.get("passport_photo_path"),
+                    row.get("transcript_path"),
+                    row.get("certificate_path"),
+                    row.get("receipt_path"),
+                    ""  # Programme will be updated from course registration data
                 )
                 c.execute(insert_student_query, params)
 
-            # Insert course registration data
+            # Insert course registration data.
             insert_reg_query = """
                 INSERT INTO course_registration (
                     student_id, index_number, programme, specialization, level,
@@ -1858,10 +1877,8 @@ def upload_data_from_excel_and_docs():
                     row.get("receipt_amount", 0.0),
                 )
                 c.execute(insert_reg_query, params)
-                # Update the student's programme field based on registration excel.
-                update_query = (
-                    "UPDATE student_info SET programme = ? WHERE student_id = ?"
-                )
+                # Update the student's programme field based on the registration Excel.
+                update_query = "UPDATE student_info SET programme = ? WHERE student_id = ?"
                 c.execute(update_query, (row.get("programme"), row.get("student_id")))
 
             conn.commit()
@@ -1871,10 +1888,9 @@ def upload_data_from_excel_and_docs():
         except Exception as e:
             st.error(f"Error processing Excel files: {e}")
 
-        # Process the documents zip if provided.
+        # Process the documents zip file if provided.
         if docs_zip:
-            # Instead of processing the zip file,
-            # simply save it in the uploads folder exactly as it is.
+            # Save the zip file as-is in the uploads folder.
             saved_zip_path = save_uploaded_file(docs_zip, "uploads")
             st.success("Documents zip uploaded successfully!")
 
@@ -2291,16 +2307,16 @@ def update_disability_fields(student):
 def manage_student_records():
     st.subheader("Student Records Management")
 
-    col1, col2, col3 = st.columns([2, 2, 1])
+    # Add search phrase input for filtering records
+    search_phrase = st.text_input("Search by phrase (ID, surname, or other names)", "")
 
+    col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
         sort_by = st.selectbox(
             "Sort by", ["Student ID", "Surname", "Date Added", "Programme"]
         )
-
     with col2:
         sort_order = st.selectbox("Order", ["Ascending", "Descending"])
-
     with col3:
         status_filter = st.selectbox(
             "Status", ["All", "Pending", "Approved", "Rejected"]
@@ -2315,7 +2331,8 @@ def manage_student_records():
     }[sort_by]
 
     order = "ASC" if sort_order == "Ascending" else "DESC"
-    query = f"""
+    # Base query and parameters list
+    query = """
         SELECT 
             student_id,
             surname,
@@ -2354,11 +2371,25 @@ def manage_student_records():
             created_at,
             programme
         FROM student_info 
-        WHERE 1=1 
-        {f"AND approval_status = '{status_filter.lower()}'" if status_filter != 'All' else ''}
-        ORDER BY {sort_field} {order}
+        WHERE 1=1
     """
-    df = pd.read_sql_query(query, conn)
+    params = []
+
+    # Add status filter if not "All"
+    if status_filter != "All":
+        query += " AND approval_status = ?"
+        params.append(status_filter.lower())
+    
+    # Add search by phrase filter if present
+    if search_phrase.strip():
+        query += " AND (student_id LIKE ? OR surname LIKE ? OR other_names LIKE ?)"
+        like_phrase = f"%{search_phrase.strip()}%"
+        params.extend([like_phrase, like_phrase, like_phrase])
+    
+    # Add ordering
+    query += f" ORDER BY {sort_field} {order}"
+    
+    df = pd.read_sql_query(query, conn, params=params)
 
     if not df.empty:
         for _, student in df.iterrows():
@@ -2812,6 +2843,9 @@ def manage_student_records():
 
 def manage_course_registrations():
     st.subheader("Course Registration Management")
+    
+    # Add search phrase input for filtering registration records
+    search_phrase = st.text_input("Search registrations (by student ID, surname, or registration ID)", "")
 
     col1, col2, col3 = st.columns([2, 2, 1])
 
@@ -2839,16 +2873,29 @@ def manage_course_registrations():
 
     order = "ASC" if sort_order == "Ascending" else "DESC"
 
-    query = f"""
+    # Base query and parameters list for registrations
+    query = """
         SELECT cr.*, si.surname, si.other_names 
         FROM course_registration cr 
         LEFT JOIN student_info si ON cr.student_id = si.student_id 
-        WHERE 1=1 
-        {f"AND cr.approval_status = '{status_filter.lower()}'" if status_filter != 'All' else ''}
-        ORDER BY {sort_field} {order}
+        WHERE 1=1
     """
-
-    df = pd.read_sql_query(query, conn)
+    params = []
+    
+    # Add status filter if not All
+    if status_filter != "All":
+        query += " AND cr.approval_status = ?"
+        params.append(status_filter.lower())
+    
+    # Add search by phrase filter if provided, search in registration_id, student_id, surname, or other_names
+    if search_phrase.strip():
+        query += " AND (cr.registration_id LIKE ? OR cr.student_id LIKE ? OR si.surname LIKE ? OR si.other_names LIKE ?)"
+        like_phrase = f"%{search_phrase.strip()}%"
+        params.extend([like_phrase, like_phrase, like_phrase, like_phrase])
+    
+    query += f" ORDER BY {sort_field} {order}"
+    
+    df = pd.read_sql_query(query, conn, params=params)
 
     if not df.empty:
         for _, registration in df.iterrows():
@@ -3308,7 +3355,7 @@ def student_login_form():
         student_id = st.text_input("Student ID")
     with col2:
         password = st.text_input(
-            "Password (Birthday eg.'YYYY-MM-DD')",
+            "Password",
             type="password",
             help="Default password is your date of birth (YYYY-MM-DD)",
         )
@@ -3399,54 +3446,29 @@ def student_login_form():
 
 
 def student_portal():
-    """
-    Student portal view: display student information, course registrations,
-    available documents and options to download PDFs.
-    """
     st.header("🎓 Welcome to Your Student Portal")
     student_id = st.session_state.get("student_logged_in")
     if not student_id:
         st.error("You must be logged in to view this page.")
         return
 
+    # Fetch student information and course registrations from the database.
     conn = sqlite3.connect("student_registration.db")
     c = conn.cursor()
-
-    # Fetch student information
-    c.execute(
-        """
-        SELECT * FROM student_info 
-        WHERE student_id = ?
-    """,
-        (student_id,),
-    )
+    c.execute("SELECT * FROM student_info WHERE student_id = ?", (student_id,))
     student = c.fetchone()
 
-    # Fetch course registrations
-    c.execute(
-        """
-        SELECT * FROM course_registration 
-        WHERE student_id = ? 
-        ORDER BY date_registered DESC
-    """,
-        (student_id,),
-    )
+    c.execute("SELECT * FROM course_registration WHERE student_id = ? ORDER BY date_registered DESC", (student_id,))
     registrations = c.fetchall()
-
     conn.close()
 
-    if not student:
-        st.error("Student record not found.")
-        return
+    # Create portal tabs with an additional "Proof of Registration" tab.
+    tabs = st.tabs(["Profile", "Course Registrations", "Documents", "Proof of Registration", "Settings", "Notifications"])
 
-    tabs = st.tabs(
-        ["Profile", "Course Registrations", "Documents", "Settings", "Notifications"]
-    )  # Added Notifications
-
+    # Profile Tab (existing code: abbreviated for brevity)
     with tabs[0]:
         st.subheader("Personal Information")
         col1, col2 = st.columns(2)
-
         with col1:
             if student[28] and os.path.exists(student[28]):  # passport_photo_path
                 try:
@@ -3454,62 +3476,49 @@ def student_portal():
                     st.image(image, width=200, caption="Student Photo")
                 except Exception as e:
                     st.error(f"Error loading passport photo: {str(e)}")
-
             st.write("**Basic Information**")
             st.write(f"Student ID: {student[0]}")
             st.write(f"Name: {student[1]} {student[2]}")
             st.write(f"Date of Birth: {student[3]}")
             st.write(f"Gender: {student[13]}")
             st.write(f"Nationality: {student[11]}")
-
         with col2:
             st.write("**Contact Information**")
             st.write(f"Email: {student[8]}")
             st.write(f"Phone: {student[9]}")
-            st.write(f"Address: {student[6]}")
+            st.write(f"Residential Address: {student[6]}")
             st.write(f"Postal Address: {student[7]}")
-
             st.write("**Academic Information**")
             st.write(f"Programme: {student[-1]}")  # programme is the last column
             st.write(f"Previous School: {student[23]}")
             st.write(f"Qualification: {student[24]}")
 
+    # Course Registrations Tab (existing code snippet)
     with tabs[1]:
         st.subheader("Course Registrations")
         if registrations:
-            for registration in registrations:
-                with st.expander(
-                    f"Registration - {registration[5]} {registration[6]} Semester"
-                ):
+            for reg in registrations:
+                with st.expander(f"Registration ID: {reg[0]} - {reg[11]}"):
                     col1, col2 = st.columns(2)
-
                     with col1:
-                        st.write(f"**Programme:** {registration[3]}")
-                        st.write(f"**Level:** {registration[5]}")
-                        st.write(f"**Session:** {registration[6]}")
-
+                        st.write(f"**Programme:** {reg[3]}")
+                        st.write(f"**Level:** {reg[5]}")
+                        st.write(f"**Session:** {reg[6]}")
                     with col2:
-                        st.write(f"**Academic Year:** {registration[6]}")
-                        st.write(f"**Semester:** {registration[7]}")
-                        st.write(f"**Total Credits:** {registration[10]}")
-
-                    st.write("**Selected Courses**")
-                    if registration[9]:  # courses
-                        courses_list = registration[9].split("\n")
+                        st.write(f"**Academic Year:** {reg[7]}")
+                        st.write(f"**Semester:** {reg[8]}")
+                        st.write(f"**Total Credits:** {reg[10]}")
+                    if reg[9]:
+                        st.write("**Selected Courses:**")
+                        courses_list = reg[9].split("\n")
                         for course in courses_list:
                             if "|" in course:
                                 code, title, credits = course.split("|")
                                 st.write(f"- {code}: {title} ({credits} credits)")
-
-                    if registration[13]:  # receipt_path
-                        st.write(f"**Payment Amount:** GHS {registration[14]:.2f}")
-                        if os.path.exists(registration[13]):
-                            st.write(f"[View Receipt]({registration[13]})")
-
-
         else:
             st.info("No course registrations found.")
 
+    # Documents Tab (existing code snippet)
     with tabs[2]:
         st.subheader("Documents")
         documents = {
@@ -3519,7 +3528,6 @@ def student_portal():
             "Certificate": student[30],
             "Receipt": student[31],
         }
-
         for doc_name, doc_path in documents.items():
             if doc_path and os.path.exists(doc_path):
                 st.write(f"**{doc_name}**")
@@ -3527,14 +3535,57 @@ def student_portal():
                     st.image(doc_path, width=200, caption=doc_name)
                 else:
                     st.write(f"[View {doc_name}]({doc_path})")
+            else:
+                st.write(f"**{doc_name}:** Not uploaded")
 
+    # NEW: Proof of Registration Tab
     with tabs[3]:
+        st.subheader("Proof of Registration")
+        if not registrations:
+            st.info("No course registration records found.")
+        else:
+            # List all course registrations with an option to download the registration PDF.
+            for reg in registrations:
+                # Map tuple to dictionary required by generate_course_registration_pdf.
+                reg_data = {
+                    "student_id": reg[1],
+                    "index_number": reg[2],
+                    "programme": reg[3],
+                    "specialization": reg[4],
+                    "level": reg[5],
+                    "session": reg[6],
+                    "academic_year": reg[7],
+                    "semester": reg[8],
+                    "courses": reg[9],
+                    "total_credits": reg[10],
+                    "receipt_path": reg[13],
+                    "receipt_amount": reg[14]
+                }
+                st.markdown(f"**Registration Record (ID: {reg[0]}) - Date Registered: {reg[11]}**")
+                # When the student clicks the button, generate the PDF and provide a download.
+                if st.button(f"Download Proof of Registration (ID: {reg[0]})", key=f"download_{reg[0]}"):
+                    pdf_file = generate_course_registration_pdf(reg_data)
+                    if os.path.exists(pdf_file):
+                        with open(pdf_file, "rb") as f:
+                            pdf_bytes = f.read()
+                        st.download_button(
+                            label=f"Download Registration PDF (ID: {reg[0]})",
+                            data=pdf_bytes,
+                            file_name=pdf_file,
+                            mime="application/pdf"
+                        )
+                        # Clean up the generated PDF file.
+                        os.remove(pdf_file)
+                    else:
+                        st.error("Error generating PDF. Please try again.")
+
+    # Settings Tab (existing code snippet)
+    with tabs[4]:
         st.subheader("Account Settings")
         if st.button("Change Password"):
             current_password = st.text_input("Current Password", type="password")
             new_password = st.text_input("New Password", type="password")
             confirm_password = st.text_input("Confirm New Password", type="password")
-
             if st.button("Update Password"):
                 if new_password != confirm_password:
                     st.error("New passwords do not match.")
@@ -3543,35 +3594,20 @@ def student_portal():
                 else:
                     conn = sqlite3.connect("student_registration.db")
                     c = conn.cursor()
-                    c.execute(
-                        """
-                        SELECT password FROM student_info 
-                        WHERE student_id = ?
-                    """,
-                        (student_id,),
-                    )
+                    c.execute("SELECT password FROM student_info WHERE student_id = ?", (student_id,))
                     stored_password = c.fetchone()[0]
-
                     if current_password == stored_password:
-                        c.execute(
-                            """
-                            UPDATE student_info 
-                            SET password = ? 
-                            WHERE student_id = ?
-                        """,
-                            (new_password, student_id),
-                        )
+                        c.execute("UPDATE student_info SET password = ? WHERE student_id = ?", (new_password, student_id))
                         conn.commit()
                         st.success("Password updated successfully!")
                     else:
                         st.error("Current password is incorrect.")
                     conn.close()
-
         if st.button("Logout"):
             st.session_state.student_logged_in = None
             st.rerun()
 
-    with tabs[4]:  # Notifications tab
+    with tabs[5]:  # Notifications tab
         st.subheader("📢 Notifications")
 
         notification_system = NotificationSystem()
