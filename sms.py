@@ -4798,16 +4798,6 @@ def main():
             background-color: #f8f9fa;
             border-radius: 10px;
         }
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 24px;
-        }
-        .stTabs [data-baseweb="tab"] {
-            height: 50px;
-            white-space: pre-wrap;
-            background-color: #f0f2f6;
-            border-radius: 5px;
-            padding: 10px;
-        }
         </style>
     """,
         unsafe_allow_html=True,
