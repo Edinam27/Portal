@@ -93,19 +93,6 @@ def init_db():
         )
         """
     )
-    # Insert admin users if they don't exist
-    admins = [
-        ("EdinamSD", "prettyFLACO", "edinam.ayisadu@gmail.com"),
-        ("admin2", "admin456", "admin2@school.edu"),
-    ]
-    for admin in admins:
-        c.execute(
-            """
-            INSERT OR IGNORE INTO admin (username, password, email) 
-            VALUES (?, ?, ?)
-            """,
-            admin,
-        )
 
     # Create student_info table.
     # NOTE: Transcript and receipt columns have been retained in the DB for legacy but will NOT be used.
@@ -1501,6 +1488,7 @@ def admin_dashboard():
             "Generate Reports",
             "Send Emails",
             "Notifications",
+            "System Monitor"
         ],  # Added Notifications
     )
 
@@ -1522,6 +1510,17 @@ def admin_dashboard():
         send_emails()
     elif menu == "Notifications":
         admin_notification_interface()
+    elif menu == "System Monitor":
+        st.subheader("System Resource Monitor")
+        metrics = system_resource_monitor()
+        st.write(f"CPU Usage: {metrics['cpu']}%")
+        st.write(f"Memory Usage: {metrics['memory_percent']}%")
+        st.write(f"Disk Usage: {metrics['disk_percent']}%")
+        if should_backup():
+            st.warning("Backup recommended: Either it has been over 30 days since the last backup or disk usage is ≥ 90%.")
+        if st.button("Perform Backup Now"):
+            backup_file = perform_backup()
+            st.success(f"Backup performed successfully! Backup file: {backup_file}")
 
 
 def zip_uploads_folder():
@@ -3326,6 +3325,62 @@ def manage_programs():
         st.info("No programs found in the database")
 
     conn.close()
+    
+    
+def check_disk_usage():
+    usage = psutil.disk_usage("/")
+    return usage.percent
+
+def system_resource_monitor():
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    return {
+        "cpu": cpu_percent,
+        "memory_percent": memory.percent,
+        "disk_percent": disk.percent
+    }
+
+def perform_backup():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_dir = "db_backups"
+    if not os.path.exists(backup_dir):
+        os.makedirs(backup_dir)
+    backup_filename = os.path.join(backup_dir, f"backup_{timestamp}.zip")
+    with zipfile.ZipFile(backup_filename, "w") as zipf:
+        # Backup the database file.
+        db_file = "student_registration.db"
+        if os.path.exists(db_file):
+            zipf.write(db_file, arcname=os.path.basename(db_file))
+        # Backup the uploads folder.
+        uploads_dir = "uploads"
+        if os.path.exists(uploads_dir):
+            for root, dirs, files in os.walk(uploads_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, uploads_dir)
+                    zipf.write(file_path, arcname=os.path.join("uploads", arcname))
+    # Record last backup timestamp.
+    with open("last_backup.txt", "w") as f:
+        f.write(datetime.now().isoformat())
+    return backup_filename
+
+def should_backup():
+    need_backup = False
+    now = datetime.now()
+    if os.path.exists("last_backup.txt"):
+        with open("last_backup.txt", "r") as f:
+            last_backup_str = f.read().strip()
+            if last_backup_str:
+                last_backup = datetime.fromisoformat(last_backup_str)
+                if now - last_backup > timedelta(days=30):
+                    need_backup = True
+    else:
+        need_backup = True
+    if check_disk_usage() >= 90:
+        need_backup = True
+    return need_backup
+
 
 
 # Student Portal Authentication and Views
@@ -5413,6 +5468,16 @@ class RegistrationConstraintsManager:
                                 
                                 
 
+def admin_login():
+    st.sidebar.subheader("Admin Login")
+    username = st.sidebar.text_input("Username", key="login_username")
+    password = st.sidebar.text_input("Password", type="password", key="login_password")
+    if st.sidebar.button("Login"):
+        if username == st.secrets["admin"]["username"] and password == st.secrets["admin"]["password"]:
+            st.session_state.admin_logged_in = True
+            st.rerun()
+        else:
+            st.error("Invalid credentials")
 
 def main():
     initialize_app()
@@ -5421,23 +5486,9 @@ def main():
     rc_manager = RegistrationConstraintsManager()
     rc_manager.cleanup_old_files(days_old=30)
 
-
-    if not st.session_state.admin_logged_in:
-        with st.sidebar:
-            st.subheader("Admin Login")
-            username = st.text_input("Username", key="login_username")
-            password = st.text_input("Password", type="password", key="login_password")
-            if st.button("Login"):
-                conn = sqlite3.connect("student_registration.db")
-                c = conn.cursor()
-                c.execute("SELECT * FROM admin WHERE username=? AND password=?", (username, password))
-                admin = c.fetchone()
-                conn.close()
-                if admin:
-                    st.session_state.admin_logged_in = True
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
+    # Display admin login if not logged in.
+    if not st.session_state.get("admin_logged_in", False):
+        admin_login()
 
     if st.session_state.admin_logged_in:
         admin_dashboard()
