@@ -5496,10 +5496,15 @@ def main():
         # Add this to the navigation options in main()
         page = st.sidebar.radio(
             "Navigation",
-            ["Student Portal", "Student Information", "Course Registration"],
+            ["Student Information", "Course Registration", "Student Portal"],
         )
 
-        if page == "Student Portal":
+        if page == "Student Information":
+            student_info_form()
+            
+        elif page == "Course Registration":
+            course_registration_form()
+        else:
             if "student_logged_in" not in st.session_state:
                 student_login_form()
             else:
@@ -5515,10 +5520,6 @@ def main():
                         """,
                         unsafe_allow_html=True,
                     )
-        elif page == "Student Information":
-            student_info_form()
-        else:
-            course_registration_form()
             
 
 
