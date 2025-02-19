@@ -5,15 +5,7 @@ import pandas as pd
 import os
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-# Alias ReportLab’s Table to avoid conflict with openpyxl Table.
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table as RLTable,
-    TableStyle,
-    Image,
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table as RLTable, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch, cm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -34,7 +26,20 @@ from email.mime.text import MIMEText
 from contextlib import contextmanager
 import time
 import json
-from typing import Union, Dict, List  # Add this line
+from typing import Union, Dict, List, Any, Optional, Tuple
+import logging
+import gc
+import psutil  # For memory checking
+
+
+# Set page config must be the first Streamlit command
+st.set_page_config(
+    page_title="Student Registration System",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 
 # Email configuration constants (replace with your actual SMTP server details)
 SMTP_SERVER = "smtp.example.com"  # e.g., "smtp.gmail.com"
@@ -70,10 +75,13 @@ def get_db_connection(max_retries=5, retry_delay=1):
                 raise
 
 
+
+
 def init_db():
     conn = sqlite3.connect("student_registration.db")
     c = conn.cursor()
 
+    # Create admin table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS admin (
@@ -83,68 +91,68 @@ def init_db():
             email TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
-    """
+        """
     )
-
     # Insert admin users if they don't exist
     admins = [
         ("EdinamSD", "prettyFLACO", "edinam.ayisadu@gmail.com"),
         ("admin2", "admin456", "admin2@school.edu"),
     ]
-
     for admin in admins:
         c.execute(
             """
             INSERT OR IGNORE INTO admin (username, password, email) 
             VALUES (?, ?, ?)
-        """,
+            """,
             admin,
         )
 
+    # Create student_info table.
+    # NOTE: Transcript and receipt columns have been retained in the DB for legacy but will NOT be used.
     c.execute(
         """
-                CREATE TABLE IF NOT EXISTS student_info (
-                    student_id TEXT PRIMARY KEY,
-                    surname TEXT,
-                    other_names TEXT,
-                    date_of_birth DATE,
-                    place_of_birth TEXT,
-                    home_town TEXT,
-                    residential_address TEXT,
-                    postal_address TEXT,
-                    email TEXT,
-                    telephone TEXT,
-                    ghana_card_id TEXT,
-                    nationality TEXT,
-                    marital_status TEXT,
-                    gender TEXT,
-                    religion TEXT,
-                    denomination TEXT,
-                    disability_status TEXT,
-                    disability_description TEXT,
-                    guardian_name TEXT,
-                    guardian_relationship TEXT,
-                    guardian_occupation TEXT,
-                    guardian_address TEXT,
-                    guardian_telephone TEXT,
-                    previous_school TEXT,
-                    qualification_type TEXT,
-                    completion_year TEXT,
-                    aggregate_score TEXT,
-                    ghana_card_path TEXT,
-                    passport_photo_path TEXT,
-                    transcript_path TEXT,
-                    certificate_path TEXT,
-                    receipt_path TEXT,
-                    receipt_amount REAL DEFAULT 0.0,
-                    approval_status TEXT DEFAULT 'pending',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    programme TEXT,
-                    password TEXT,
-                    last_login DATETIME,
-                    password_reset_required BOOLEAN DEFAULT 1
-                )
-            """
+        CREATE TABLE IF NOT EXISTS student_info (
+            student_id TEXT PRIMARY KEY,
+            surname TEXT,
+            other_names TEXT,
+            date_of_birth DATE,
+            place_of_birth TEXT,
+            home_town TEXT,
+            residential_address TEXT,
+            postal_address TEXT,
+            email TEXT,
+            telephone TEXT,
+            ghana_card_id TEXT,
+            nationality TEXT,
+            marital_status TEXT,
+            gender TEXT,
+            religion TEXT,
+            denomination TEXT,
+            disability_status TEXT,
+            disability_description TEXT,
+            guardian_name TEXT,
+            guardian_relationship TEXT,
+            guardian_occupation TEXT,
+            guardian_address TEXT,
+            guardian_telephone TEXT,
+            previous_school TEXT,
+            qualification_type TEXT,
+            completion_year TEXT,
+            aggregate_score TEXT,
+            ghana_card_path TEXT,
+            passport_photo_path TEXT,
+            certificate_path TEXT,
+            transcript_path TEXT,  -- Not used anymore
+            receipt_path TEXT,     -- Not used anymore
+            receipt_amount REAL DEFAULT 0.0,
+            approval_status TEXT DEFAULT 'pending',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            programme TEXT,
+            password TEXT,
+            last_login DATETIME,
+            password_reset_required BOOLEAN DEFAULT 1
+        )
+        """
     )
 
     try:
@@ -172,19 +180,19 @@ def init_db():
             receipt_amount REAL DEFAULT 0.0,
             FOREIGN KEY (student_id) REFERENCES student_info (student_id)
         )
-    """
+        """
     )
 
-    # Create notifications table for sending notifications
+    # Create notifications table
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS notifications (
             notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
             recipient_id TEXT,
-            recipient_type TEXT,  -- 'student', 'program', or 'all'
+            recipient_type TEXT,
             title TEXT,
             message TEXT,
-            notification_type TEXT,  -- 'info', 'warning', 'success', 'error'
+            notification_type TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             read_at DATETIME,
             metadata TEXT,
@@ -192,8 +200,6 @@ def init_db():
         )
         """
     )
-
-    # Create notification_reads table to track read notifications for each student
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS notification_reads (
@@ -204,10 +210,8 @@ def init_db():
         )
         """
     )
-
     conn.commit()
     conn.close()
-
 
 
 import sqlite3
@@ -659,7 +663,10 @@ def generate_student_info_pdf(data):
     header_data = [
         [
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
-            Paragraph("UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>IPS DIRECTORATE", styles["CustomTitle"]),
+            Paragraph(
+                "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>IPS DIRECTORATE",
+                styles["CustomTitle"],
+            ),
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     ]
@@ -677,13 +684,21 @@ def generate_student_info_pdf(data):
     elements.append(Spacer(1, 20))
 
     # Document Title
-    elements.append(Paragraph("PROFESSIONAL STUDENT'S INFORMATION DOCUMENT", styles["CustomTitle"]))
+    elements.append(
+        Paragraph("PROFESSIONAL STUDENT'S INFORMATION DOCUMENT", styles["CustomTitle"])
+    )
     elements.append(Spacer(1, 20))
 
     # Add passport photo if available
     if data["passport_photo_path"]:
         try:
-            photo_data = [[Image(data["passport_photo_path"], width=1.5 * inch, height=1.5 * inch)]]
+            photo_data = [
+                [
+                    Image(
+                        data["passport_photo_path"], width=1.5 * inch, height=1.5 * inch
+                    )
+                ]
+            ]
             photo_table = RLTable(photo_data, [1.5 * inch])
             photo_table.setStyle(
                 TableStyle(
@@ -879,13 +894,20 @@ def generate_course_registration_pdf(data):
                 img_buffer.seek(0)
                 header_elements.append(Image(img_buffer))
         except Exception as e:
-            header_elements.append(Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch))
+            header_elements.append(
+                Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
+            )
     else:
-        header_elements.append(Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch))
+        header_elements.append(
+            Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
+        )
 
     header_elements.extend(
         [
-            Paragraph("UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>Proof of Registration", styles["CustomTitle"]),
+            Paragraph(
+                "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>Proof of Registration",
+                styles["CustomTitle"],
+            ),
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     )
@@ -903,7 +925,12 @@ def generate_course_registration_pdf(data):
 
     if student_info:
         student_details = [
-            [Paragraph(f"<b>Name:</b> {student_info[1]} {student_info[2]}", styles["Normal"])],
+            [
+                Paragraph(
+                    f"<b>Name:</b> {student_info[1]} {student_info[2]}",
+                    styles["Normal"],
+                )
+            ],
             [Paragraph(f"<b>Email:</b> {student_info[3]}", styles["Normal"])],
         ]
         student_table = RLTable(student_details, [7 * inch])
@@ -966,7 +993,19 @@ def generate_course_registration_pdf(data):
         )
     )
     elements.append(t)
-    elements.append(Paragraph(f"<b>Total Credit Hours:</b> {data['total_credits']}", ParagraphStyle("TotalCredits", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#003366"), alignment=TA_LEFT, spaceBefore=10)))
+    elements.append(
+        Paragraph(
+            f"<b>Total Credit Hours:</b> {data['total_credits']}",
+            ParagraphStyle(
+                "TotalCredits",
+                parent=styles["Normal"],
+                fontSize=10,
+                textColor=colors.HexColor("#003366"),
+                alignment=TA_LEFT,
+                spaceBefore=10,
+            ),
+        )
+    )
     elements.append(Spacer(1, 30))
 
     if data.get("receipt_path"):
@@ -1013,7 +1052,13 @@ def generate_course_registration_pdf(data):
     elements.append(
         Paragraph(
             f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | UPSA Course Registration System",
-            ParagraphStyle("Footer", parent=styles["Normal"], fontSize=8, textColor=colors.grey, alignment=TA_CENTER),
+            ParagraphStyle(
+                "Footer",
+                parent=styles["Normal"],
+                fontSize=8,
+                textColor=colors.grey,
+                alignment=TA_CENTER,
+            ),
         )
     )
 
@@ -1126,24 +1171,32 @@ def student_info_form():
     st.header("📝 Student Information Form")
 
     form_data = {}
+    rc_manager = RegistrationConstraintsManager()
+
+    # Collect Student ID first and check for duplicate submission.
+    student_id_input = st.text_input("Student ID")
+    if student_id_input:
+        form_data["student_id"] = student_id_input.strip()
+        # Check if student info already exists.
+        if rc_manager.check_existing_student_info(form_data["student_id"]):
+            st.warning("You have already submitted your student information. Please proceed to course registration or contact administration for changes.")
+            st.stop()
+    else:
+        st.info("Please enter your Student ID to begin.")
+        st.stop()
 
     st.subheader("Personal Information")
     col1, col2 = st.columns(2)
-
     with col1:
-        form_data["student_id"] = st.text_input("Student ID")
         form_data["surname"] = st.text_input("Surname")
         form_data["other_names"] = st.text_input("First & Middle Names")
         form_data["date_of_birth"] = st.date_input("Date of Birth")
         form_data["place_of_birth"] = st.text_input("Place of Birth")
         form_data["home_town"] = st.text_input("Home Town")
         form_data["nationality"] = st.text_input("Nationality")
-
     with col2:
         form_data["gender"] = st.selectbox("Gender", ["Male", "Female", "Other"])
-        form_data["marital_status"] = st.selectbox(
-            "Marital Status", ["Single", "Married", "Divorced", "Widowed"]
-        )
+        form_data["marital_status"] = st.selectbox("Marital Status", ["Single", "Married", "Divorced", "Widowed"])
         form_data["religion"] = st.text_input("Religion")
         form_data["denomination"] = st.text_input("Denomination")
         disability_status = st.selectbox("Disability Status", ["None", "Yes"])
@@ -1155,123 +1208,83 @@ def student_info_form():
 
     st.subheader("Contact Information")
     col3, col4 = st.columns(2)
-
     with col3:
         form_data["residential_address"] = st.text_area("Residential Address")
         form_data["postal_address"] = st.text_area("Postal Address")
         form_data["email"] = st.text_input("Email Address")
-
     with col4:
         form_data["telephone"] = st.text_input("Telephone Number")
         form_data["ghana_card_id"] = st.text_input("Ghana Card ID Number")
 
     st.subheader("Guardian Information")
     col5, col6 = st.columns(2)
-
     with col5:
         form_data["guardian_name"] = st.text_input("Guardian's Name")
         form_data["guardian_relationship"] = st.text_input("Relationship to Guardian")
         form_data["guardian_occupation"] = st.text_input("Guardian's Occupation")
-
     with col6:
         form_data["guardian_address"] = st.text_area("Guardian's Address")
         form_data["guardian_telephone"] = st.text_input("Guardian's Telephone")
 
     st.subheader("Educational Background")
     col7, col8 = st.columns(2)
-
     with col7:
         form_data["previous_school"] = st.text_input("Previous School")
         form_data["qualification_type"] = st.text_input("Qualification Type")
-
     with col8:
         form_data["completion_year"] = st.text_input("Year of Completion")
         form_data["aggregate_score"] = st.text_input("Aggregate Score")
 
     st.subheader("📎 Required Documents")
     col9, col10 = st.columns(2)
-
     with col9:
         st.markdown('<div class="upload-section">', unsafe_allow_html=True)
         ghana_card = st.file_uploader("Upload Ghana Card/Birth Certificate", type=["pdf", "jpg", "png"])
         passport_photo = st.file_uploader("Upload Passport Photo", type=["jpg", "png"])
-        transcript = st.file_uploader("Upload Transcript", type=["pdf"])
+        # Removed Transcript upload
+        certificate = st.file_uploader("Upload Certificate", type=["pdf"])
         st.markdown("</div>", unsafe_allow_html=True)
-
     with col10:
         st.markdown('<div class="upload-section">', unsafe_allow_html=True)
-        certificate = st.file_uploader("Upload Certificate", type=["pdf"])
-        st.write("Optional Payment Receipt")
-        receipt = st.file_uploader(
-            "Upload Payment Receipt (Optional)", type=["pdf", "jpg", "png"]
-        )
+        # Removed receipt upload from student information
         st.markdown("</div>", unsafe_allow_html=True)
-
-        if receipt:
-            receipt_amount = st.number_input(
-                "Receipt Amount (GHS)", min_value=0.0, format="%.2f"
-            )
-            if receipt_amount < 100.0:
-                st.warning(
-                    "Receipt amount seems low. Please verify the payment amount."
-                )
 
     uploaded_files = {
         "Ghana Card": ghana_card,
         "Passport Photo": passport_photo,
-        "Transcript/ Results": transcript,
         "Certificate": certificate,
-        "Receipt": receipt,
+        # transcript and receipt keys removed
     }
 
-    col_buttons = st.columns([2, 2, 1])
-
+    col_buttons = st.columns([2, 2])
     with col_buttons[0]:
         if st.button("Review Information", use_container_width=True):
             st.session_state.review_mode = True
             st.session_state.form_data = form_data
             st.session_state.uploaded_files = uploaded_files
             st.rerun()
-
     if "review_mode" in st.session_state and st.session_state.review_mode:
         review_student_info(st.session_state.form_data, st.session_state.uploaded_files)
-
         with col_buttons[1]:
-            if st.button("Edit Information", use_container_width=True):
-                st.session_state.review_mode = False
-                st.rerun()
-
-        with col_buttons[2]:
             if st.button("Confirm and Submit", use_container_width=True):
                 ghana_card_path = save_uploaded_file(ghana_card, "uploads")
                 passport_photo_path = save_uploaded_file(passport_photo, "uploads")
-                transcript_path = save_uploaded_file(transcript, "uploads")
                 certificate_path = save_uploaded_file(certificate, "uploads")
-                receipt_path = (
-                    save_uploaded_file(receipt, "uploads") if receipt else None
-                )
-
+                # Set transcript and receipt as None
                 file_paths = {
                     "ghana_card_path": ghana_card_path,
                     "passport_photo_path": passport_photo_path,
-                    "transcript_path": transcript_path,
                     "certificate_path": certificate_path,
-                    "receipt_path": receipt_path,
+                    "transcript_path": None,
+                    "receipt_path": None,
                 }
-
-                if receipt and "receipt_amount" in locals():
-                    form_data["receipt_amount"] = receipt_amount
-
                 try:
                     conn = sqlite3.connect("student_registration.db")
                     c = conn.cursor()
-                    insert_student_info(c, form_data, file_paths)
+                    insert_student_info(c, st.session_state.form_data, file_paths)
                     conn.commit()
-                    st.success(
-                        "Information submitted successfully! Pending admin approval."
-                    )
+                    st.success("Information submitted successfully! Pending admin approval.")
                     st.session_state.review_mode = False
-
                 except sqlite3.IntegrityError:
                     st.error("Student ID already exists!")
                 except Exception as e:
@@ -1366,157 +1379,111 @@ def download_all_documents():
 
 def course_registration_form():
     st.header("📚 Course Registration Form (A7)")
-
     form_data = {}
+    rc_manager = RegistrationConstraintsManager()
 
     form_data["student_id"] = st.text_input("Student ID")
+    if not form_data["student_id"]:
+        st.warning("Please enter your Student ID")
+        st.stop()
+        
+    # Prevent duplicate registration
+    if rc_manager.check_existing_course_registration(form_data["student_id"]):
+        st.warning("You have already submitted your course registration. Duplicate submissions are not allowed.")
+        st.stop()
 
-    if form_data["student_id"]:
-        conn = sqlite3.connect("student_registration.db")
-        c = conn.cursor()
-
-        c.execute(
-            "SELECT * FROM student_info WHERE student_id = ?",
-            (form_data["student_id"],),
-        )
-        student_info = c.fetchone()
-
-        if student_info:
-            st.markdown("---")
-            col_photo, col_info = st.columns([1, 3])
-
-            with col_photo:
-                if student_info[28]:
-                    try:
-                        image = PILImage.open(student_info[28])
-                        st.image(image, caption="Student Photo", width=150)
-                    except Exception as e:
-                        st.error(f"Error loading passport photo: {str(e)}")
-                else:
-                    st.warning("No passport photo available")
-
-            with col_info:
-                st.markdown(f"### {student_info[1]} {student_info[2]}")
-                st.write(f"**Student ID:** {student_info[0]}")
-                st.write(f"**Email:** {student_info[8]}")
-                st.write(f"**Phone:** {student_info[9]}")
-
-            col3, col4 = st.columns(2)
-            with col3:
-                form_data["programme"] = st.selectbox(
-                    "Programme", ["CIMG", "CIM-UK", "ICAG", "ACCA"]
-                )
-                program_levels = list(
-                    get_program_courses(form_data["programme"]).keys()
-                )
-                form_data["level"] = st.selectbox("Level/Part", program_levels)
-                form_data["specialization"] = st.text_input("Specialization (Optional)")
-            with col4:
-                form_data["session"] = st.selectbox(
-                    "Session", ["Morning", "Evening", "Weekend"]
-                )
-                form_data["academic_year"] = st.selectbox(
-                    "Academic Year", [f"{year}-{year+1}" for year in range(2025, 2035)]
-                )
-                form_data["semester"] = st.selectbox(
-                    "Semester", ["First", "Second", "Third"]
-                )
-
-            st.subheader("Course Selection")
-            available_courses = get_program_courses(form_data["programme"]).get(
-                form_data["level"], []
-            )
-            selected_courses = st.multiselect(
-                "Select Courses",
-                available_courses,
-                format_func=lambda x: f"{x.split('|')[0]} - {x.split('|')[1]} ({x.split('|')[2]} credits)",
-            )
-
-            total_credits = sum(
-                [int(course.split("|")[2]) for course in selected_courses]
-            )
-            form_data["courses"] = "\n".join(selected_courses)
-            form_data["total_credits"] = total_credits
-
-            st.text_area(
-                "Selected Courses", form_data["courses"], height=150, disabled=True
-            )
-            st.number_input(
-                "Total Credit Hours",
-                value=total_credits,
-                min_value=0,
-                max_value=24,
-                disabled=True,
-            )
-
-            if total_credits > 24:
-                st.error("Total credits cannot exceed 24 hours!")
-                return
-
-            st.subheader("📎 Payment Information (Optional)")
-            col5, col6 = st.columns(2)
-            with col5:
-                receipt = st.file_uploader(
-                    "Upload Payment Receipt (Optional)", type=["pdf", "jpg", "png"]
-                )
-                form_data["receipt_path"] = (
-                    save_uploaded_file(receipt, "uploads") if receipt else None
-                )
-            with col6:
-                form_data["receipt_amount"] = (
-                    st.number_input(
-                        "Receipt Amount (GHS)", min_value=0.0, format="%.2f"
-                    )
-                    if receipt
-                    else 0.0
-                )
-
-            if st.button("Review Registration"):
-                review_course_registration(form_data)
-
-            if st.button("Confirm and Submit"):
+    conn = sqlite3.connect("student_registration.db")
+    c = conn.cursor()
+    c.execute("SELECT * FROM student_info WHERE student_id = ?", (form_data["student_id"],))
+    student_info = c.fetchone()
+    if student_info:
+        st.markdown("---")
+        col_photo, col_info = st.columns([1, 3])
+        with col_photo:
+            if student_info[28]:
                 try:
-                    conn = sqlite3.connect("student_registration.db")
-                    c = conn.cursor()
-                    c.execute(
-                        """
-                        INSERT INTO course_registration 
-                        (student_id, programme, specialization, level, 
-                        session, academic_year, semester, courses, total_credits, 
-                        date_registered, approval_status, receipt_path, receipt_amount)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                        (
-                            form_data["student_id"],
-                            form_data["programme"],
-                            form_data["specialization"],
-                            form_data["level"],
-                            form_data["session"],
-                            form_data["academic_year"],
-                            form_data["semester"],
-                            form_data["courses"],
-                            form_data["total_credits"],
-                            datetime.now().date(),
-                            "pending",
-                            form_data["receipt_path"],
-                            form_data["receipt_amount"],
-                        ),
-                    )
-                    conn.commit()
-                    st.success("Course registration submitted! Pending admin approval.")
-                except sqlite3.IntegrityError:
-                    st.error(
-                        "Error in registration. Please check if student ID exists."
-                    )
-                finally:
-                    conn.close()
-        else:
-            st.warning(
-                "No matching student record found. Please verify the Student ID."
-            )
+                    image = PILImage.open(student_info[28])
+                    st.image(image, caption="Student Photo", width=150)
+                except Exception as e:
+                    st.error(f"Error loading passport photo: {str(e)}")
+            else:
+                st.warning("No passport photo available")
+        with col_info:
+            st.markdown(f"### {student_info[1]} {student_info[2]}")
+            st.write(f"**Student ID:** {student_info[0]}")
+            st.write(f"**Email:** {student_info[8]}")
+            st.write(f"**Phone:** {student_info[9]}")
+        col3, col4 = st.columns(2)
+        with col3:
+            form_data["programme"] = st.selectbox("Programme", ["CIMG", "CIM-UK", "ICAG", "ACCA"])
+            program_levels = list(get_program_courses(form_data["programme"]).keys())
+            form_data["level"] = st.selectbox("Level/Part", program_levels)
+            form_data["specialization"] = st.text_input("Specialization (Optional)")
+        with col4:
+            form_data["session"] = st.selectbox("Session", ["Morning", "Evening", "Weekend"])
+            form_data["academic_year"] = st.selectbox("Academic Year", [f"{year}-{year+1}" for year in range(2025, 2035)])
+            form_data["semester"] = st.selectbox("Semester", ["First", "Second", "Third"])
+        st.subheader("Course Selection")
+        available_courses = get_program_courses(form_data["programme"]).get(form_data["level"], [])
+        selected_courses = st.multiselect(
+            "Select Courses",
+            available_courses,
+            format_func=lambda x: f"{x.split('|')[0]} - {x.split('|')[1]} ({x.split('|')[2]} credits)",
+        )
+        total_credits = sum([int(course.split("|")[2]) for course in selected_courses])
+        form_data["courses"] = "\n".join(selected_courses)
+        form_data["total_credits"] = total_credits
+        st.text_area("Selected Courses", form_data["courses"], height=150, disabled=True)
+        st.number_input("Total Credit Hours", value=total_credits, min_value=0, max_value=24, disabled=True)
+        if total_credits > 24:
+            st.error("Total credits cannot exceed 24 hours!")
             return
-
+        st.subheader("📎 Payment Information (Optional)")
+        col5, col6 = st.columns(2)
+        with col5:
+            receipt = st.file_uploader("Upload Payment Receipt (Optional)", type=["pdf", "jpg", "png"])
+            form_data["receipt_path"] = save_uploaded_file(receipt, "uploads") if receipt else None
+        with col6:
+            form_data["receipt_amount"] = st.number_input("Receipt Amount (GHS)", min_value=0.0, format="%.2f") if receipt else 0.0
+        if st.button("Review Registration"):
+            review_course_registration(form_data)
+        if st.button("Confirm and Submit"):
+            try:
+                c.execute(
+                    """
+                    INSERT INTO course_registration 
+                    (student_id, index_number, programme, specialization, level, 
+                    session, academic_year, semester, courses, total_credits, 
+                    date_registered, approval_status, receipt_path, receipt_amount)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        form_data["student_id"],
+                        form_data.get("index_number", ""),
+                        form_data["programme"],
+                        form_data["specialization"],
+                        form_data["level"],
+                        form_data["session"],
+                        form_data["academic_year"],
+                        form_data["semester"],
+                        form_data["courses"],
+                        form_data["total_credits"],
+                        datetime.now().date(),
+                        "pending",
+                        form_data["receipt_path"],
+                        form_data["receipt_amount"],
+                    ),
+                )
+                conn.commit()
+                st.success("Course registration submitted! Pending admin approval.")
+            except sqlite3.IntegrityError:
+                st.error("Error in registration. Please check if student ID exists.")
+            finally:
+                conn.close()
+    else:
+        st.warning("No matching student record found. Please verify the Student ID.")
         conn.close()
+        return
 
 
 def admin_dashboard():
@@ -1557,11 +1524,10 @@ def admin_dashboard():
         admin_notification_interface()
 
 
-
 def zip_uploads_folder():
     """
     Zips the entire 'uploads' folder preserving its structure exactly as is.
-    
+
     Returns:
         The filename of the generated zip file, or None if the uploads folder does not exist.
     """
@@ -1748,7 +1714,7 @@ def upload_data_from_excel_and_docs():
     Bulk upload function updated to accept two Excel files:
       - One for student information (now preserving document path values if provided)
       - One for course registration data (authoritative for programme and other registration data)
-    Optionally uploads a zip file for related documents. 
+    Optionally uploads a zip file for related documents.
     The zip file is saved to the uploads folder as-is.
     """
     import pandas as pd
@@ -1847,7 +1813,7 @@ def upload_data_from_excel_and_docs():
                     row.get("transcript_path"),
                     row.get("certificate_path"),
                     row.get("receipt_path"),
-                    ""  # Programme will be updated from course registration data
+                    "",  # Programme will be updated from course registration data
                 )
                 c.execute(insert_student_query, params)
 
@@ -1878,7 +1844,9 @@ def upload_data_from_excel_and_docs():
                 )
                 c.execute(insert_reg_query, params)
                 # Update the student's programme field based on the registration Excel.
-                update_query = "UPDATE student_info SET programme = ? WHERE student_id = ?"
+                update_query = (
+                    "UPDATE student_info SET programme = ? WHERE student_id = ?"
+                )
                 c.execute(update_query, (row.get("programme"), row.get("student_id")))
 
             conn.commit()
@@ -1893,7 +1861,6 @@ def upload_data_from_excel_and_docs():
             # Save the zip file as-is in the uploads folder.
             saved_zip_path = save_uploaded_file(docs_zip, "uploads")
             st.success("Documents zip uploaded successfully!")
-
 
 
 def generate_reports():
@@ -2254,24 +2221,27 @@ def show_pending_approvals():
     finally:
         conn.close()
 
+
 # Helper functions for disability status handling
 def get_disability_status_display(status):
     """
     Convert database disability status to display format
     Returns "None" or "Yes" for display in selectbox
     """
-    if status is None or str(status).lower() in ['none', 'no', '']:
+    if status is None or str(status).lower() in ["none", "no", ""]:
         return "None"
     return "Yes"
+
 
 def get_disability_status_index(status):
     """
     Get the correct index for disability status selectbox
     Returns 0 for None/No/empty and 1 for Yes
     """
-    if status is None or str(status).lower() in ['none', 'no', '']:
+    if status is None or str(status).lower() in ["none", "no", ""]:
         return 0  # Index for "None"
     return 1  # Index for "Yes"
+
 
 # Update the disability status section in manage_student_records()
 def update_disability_fields(student):
@@ -2280,29 +2250,30 @@ def update_disability_fields(student):
     Returns dictionary with updated disability fields
     """
     edited_data = {}
-    
+
     # Convert database value to display format
     current_status = get_disability_status_display(student["disability_status"])
-    
+
     # Create selectbox with correct initial value
     edited_data["disability_status"] = st.selectbox(
         "Disability Status",
         ["None", "Yes"],
         index=get_disability_status_index(current_status),
-        key=f"edit_disability_{student['student_id']}"
+        key=f"edit_disability_{student['student_id']}",
     )
-    
+
     # Show description field if status is "Yes"
     if edited_data["disability_status"] == "Yes":
         edited_data["disability_description"] = st.text_area(
             "Disability Description",
             value=student["disability_description"] or "",
-            key=f"edit_disability_desc_{student['student_id']}"
+            key=f"edit_disability_desc_{student['student_id']}",
         )
     else:
         edited_data["disability_description"] = "None"
-    
+
     return edited_data
+
 
 def manage_student_records():
     st.subheader("Student Records Management")
@@ -2379,16 +2350,16 @@ def manage_student_records():
     if status_filter != "All":
         query += " AND approval_status = ?"
         params.append(status_filter.lower())
-    
+
     # Add search by phrase filter if present
     if search_phrase.strip():
         query += " AND (student_id LIKE ? OR surname LIKE ? OR other_names LIKE ?)"
         like_phrase = f"%{search_phrase.strip()}%"
         params.extend([like_phrase, like_phrase, like_phrase])
-    
+
     # Add ordering
     query += f" ORDER BY {sort_field} {order}"
-    
+
     df = pd.read_sql_query(query, conn, params=params)
 
     if not df.empty:
@@ -2505,14 +2476,14 @@ def manage_student_records():
                             key=f"edit_denom_{student['student_id']}",
                         )
 
-
-
                         # In the manage_student_records function, replace the disability status selectbox code with:
                         edited_data["disability_status"] = st.selectbox(
                             "Disability Status",
                             ["None", "Yes"],
-                            index=get_disability_status_index(student["disability_status"]),
-                            key=f"edit_disability_{student['student_id']}"
+                            index=get_disability_status_index(
+                                student["disability_status"]
+                            ),
+                            key=f"edit_disability_{student['student_id']}",
                         )
 
                         # If disability status is "Yes", show description field
@@ -2520,8 +2491,8 @@ def manage_student_records():
                             edited_data["disability_description"] = st.text_area(
                                 "Disability Description",
                                 student["disability_description"],
-                                key=f"edit_disability_desc_{student['student_id']}"
-                        )
+                                key=f"edit_disability_desc_{student['student_id']}",
+                            )
                     st.subheader("Contact Information")
                     col3, col4 = st.columns(2)
 
@@ -2721,40 +2692,64 @@ def manage_student_records():
                         col1, col2, col3 = st.columns([3, 1, 1])
 
                         with col1:
-                            if pd.notna(doc_path) and doc_path:  # Check for both not null and not empty string
+                            if (
+                                pd.notna(doc_path) and doc_path
+                            ):  # Check for both not null and not empty string
                                 st.write(f"✅ {doc_name} uploaded")
-                                if os.path.exists(doc_path):  # Verify file exists on disk
-                                    if doc_name == "Passport Photo" or doc_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+                                if os.path.exists(
+                                    doc_path
+                                ):  # Verify file exists on disk
+                                    if (
+                                        doc_name == "Passport Photo"
+                                        or doc_path.lower().endswith(
+                                            (".jpg", ".jpeg", ".png")
+                                        )
+                                    ):
                                         try:
                                             image = PILImage.open(doc_path)
                                             st.image(image, width=150, caption=doc_name)
                                         except Exception as e:
-                                            st.error(f"Error loading {doc_name}: {str(e)}")
-                                    elif doc_path.lower().endswith('.pdf'):
+                                            st.error(
+                                                f"Error loading {doc_name}: {str(e)}"
+                                            )
+                                    elif doc_path.lower().endswith(".pdf"):
                                         st.write(f"[View {doc_name}]({doc_path})")
                                 else:
-                                    st.error(f"{doc_name} file not found on disk: {doc_path}")
+                                    st.error(
+                                        f"{doc_name} file not found on disk: {doc_path}"
+                                    )
                             else:
                                 st.write(f"❌ {doc_name} not uploaded")
 
                         with col2:
                             new_file = st.file_uploader(
                                 f"Upload new {doc_name}",
-                                type=(["pdf", "jpg", "jpeg", "png"] if doc_name == "Passport Photo" 
-                                    else ["pdf"] if doc_name in ["Transcript", "Certificate"]
-                                    else ["pdf", "jpg", "jpeg", "png"]),
-                                key=f"upload_{doc_name}_{student['student_id']}"
+                                type=(
+                                    ["pdf", "jpg", "jpeg", "png"]
+                                    if doc_name == "Passport Photo"
+                                    else (
+                                        ["pdf"]
+                                        if doc_name in ["Transcript", "Certificate"]
+                                        else ["pdf", "jpg", "jpeg", "png"]
+                                    )
+                                ),
+                                key=f"upload_{doc_name}_{student['student_id']}",
                             )
 
                             if new_file:
-                                if st.button(f"Save {doc_name}", key=f"save_{doc_name}_{student['student_id']}"):
+                                if st.button(
+                                    f"Save {doc_name}",
+                                    key=f"save_{doc_name}_{student['student_id']}",
+                                ):
                                     try:
                                         # Remove old file if it exists
                                         if doc_path and os.path.exists(doc_path):
                                             os.remove(doc_path)
 
                                         # Save new file
-                                        new_path = save_uploaded_file(new_file, "uploads")
+                                        new_path = save_uploaded_file(
+                                            new_file, "uploads"
+                                        )
                                         if new_path:
                                             # Update database with new file path
                                             c = conn.cursor()
@@ -2764,23 +2759,34 @@ def manage_student_records():
                                                 SET {doc_name.lower().replace(' ', '_')}_path = ? 
                                                 WHERE student_id = ?
                                                 """,
-                                                (new_path, student["student_id"])
+                                                (new_path, student["student_id"]),
                                             )
                                             conn.commit()
-                                            st.success(f"{doc_name} uploaded successfully!")
+                                            st.success(
+                                                f"{doc_name} uploaded successfully!"
+                                            )
                                             st.rerun()
                                         else:
                                             st.error(f"Failed to save {doc_name}")
                                     except Exception as e:
-                                        st.error(f"Error uploading {doc_name}: {str(e)}")
+                                        st.error(
+                                            f"Error uploading {doc_name}: {str(e)}"
+                                        )
 
                         with col3:
-                            if pd.notna(doc_path) and doc_path and os.path.exists(doc_path):
-                                if st.button(f"Delete {doc_name}", key=f"del_{doc_name}_{student['student_id']}"):
+                            if (
+                                pd.notna(doc_path)
+                                and doc_path
+                                and os.path.exists(doc_path)
+                            ):
+                                if st.button(
+                                    f"Delete {doc_name}",
+                                    key=f"del_{doc_name}_{student['student_id']}",
+                                ):
                                     try:
                                         # Remove file from disk
                                         os.remove(doc_path)
-                                        
+
                                         # Update database
                                         c = conn.cursor()
                                         c.execute(
@@ -2789,7 +2795,7 @@ def manage_student_records():
                                             SET {doc_name.lower().replace(' ', '_')}_path = NULL 
                                             WHERE student_id = ?
                                             """,
-                                            (student["student_id"],)
+                                            (student["student_id"],),
                                         )
                                         conn.commit()
                                         st.success(f"{doc_name} deleted successfully!")
@@ -2843,9 +2849,11 @@ def manage_student_records():
 
 def manage_course_registrations():
     st.subheader("Course Registration Management")
-    
+
     # Add search phrase input for filtering registration records
-    search_phrase = st.text_input("Search registrations (by student ID, surname, or registration ID)", "")
+    search_phrase = st.text_input(
+        "Search registrations (by student ID, surname, or registration ID)", ""
+    )
 
     col1, col2, col3 = st.columns([2, 2, 1])
 
@@ -2881,20 +2889,20 @@ def manage_course_registrations():
         WHERE 1=1
     """
     params = []
-    
+
     # Add status filter if not All
     if status_filter != "All":
         query += " AND cr.approval_status = ?"
         params.append(status_filter.lower())
-    
+
     # Add search by phrase filter if provided, search in registration_id, student_id, surname, or other_names
     if search_phrase.strip():
         query += " AND (cr.registration_id LIKE ? OR cr.student_id LIKE ? OR si.surname LIKE ? OR si.other_names LIKE ?)"
         like_phrase = f"%{search_phrase.strip()}%"
         params.extend([like_phrase, like_phrase, like_phrase, like_phrase])
-    
+
     query += f" ORDER BY {sort_field} {order}"
-    
+
     df = pd.read_sql_query(query, conn, params=params)
 
     if not df.empty:
@@ -3458,12 +3466,24 @@ def student_portal():
     c.execute("SELECT * FROM student_info WHERE student_id = ?", (student_id,))
     student = c.fetchone()
 
-    c.execute("SELECT * FROM course_registration WHERE student_id = ? ORDER BY date_registered DESC", (student_id,))
+    c.execute(
+        "SELECT * FROM course_registration WHERE student_id = ? ORDER BY date_registered DESC",
+        (student_id,),
+    )
     registrations = c.fetchall()
     conn.close()
 
     # Create portal tabs with an additional "Proof of Registration" tab.
-    tabs = st.tabs(["Profile", "Course Registrations", "Documents", "Proof of Registration", "Settings", "Notifications"])
+    tabs = st.tabs(
+        [
+            "Profile",
+            "Course Registrations",
+            "Documents",
+            "Proof of Registration",
+            "Settings",
+            "Notifications",
+        ]
+    )
 
     # Profile Tab (existing code: abbreviated for brevity)
     with tabs[0]:
@@ -3559,11 +3579,16 @@ def student_portal():
                     "courses": reg[9],
                     "total_credits": reg[10],
                     "receipt_path": reg[13],
-                    "receipt_amount": reg[14]
+                    "receipt_amount": reg[14],
                 }
-                st.markdown(f"**Registration Record (ID: {reg[0]}) - Date Registered: {reg[11]}**")
+                st.markdown(
+                    f"**Registration Record (ID: {reg[0]}) - Date Registered: {reg[11]}**"
+                )
                 # When the student clicks the button, generate the PDF and provide a download.
-                if st.button(f"Download Proof of Registration (ID: {reg[0]})", key=f"download_{reg[0]}"):
+                if st.button(
+                    f"Download Proof of Registration (ID: {reg[0]})",
+                    key=f"download_{reg[0]}",
+                ):
                     pdf_file = generate_course_registration_pdf(reg_data)
                     if os.path.exists(pdf_file):
                         with open(pdf_file, "rb") as f:
@@ -3572,7 +3597,7 @@ def student_portal():
                             label=f"Download Registration PDF (ID: {reg[0]})",
                             data=pdf_bytes,
                             file_name=pdf_file,
-                            mime="application/pdf"
+                            mime="application/pdf",
                         )
                         # Clean up the generated PDF file.
                         os.remove(pdf_file)
@@ -3594,10 +3619,16 @@ def student_portal():
                 else:
                     conn = sqlite3.connect("student_registration.db")
                     c = conn.cursor()
-                    c.execute("SELECT password FROM student_info WHERE student_id = ?", (student_id,))
+                    c.execute(
+                        "SELECT password FROM student_info WHERE student_id = ?",
+                        (student_id,),
+                    )
                     stored_password = c.fetchone()[0]
                     if current_password == stored_password:
-                        c.execute("UPDATE student_info SET password = ? WHERE student_id = ?", (new_password, student_id))
+                        c.execute(
+                            "UPDATE student_info SET password = ? WHERE student_id = ?",
+                            (new_password, student_id),
+                        )
                         conn.commit()
                         st.success("Password updated successfully!")
                     else:
@@ -3631,7 +3662,9 @@ def student_portal():
 
 
 def generate_program_student_list(program, level, students_df):
-    filename = f"{program}_{level}_students_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    filename = (
+        f"{program}_{level}_students_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    )
     doc = SimpleDocTemplate(
         filename,
         pagesize=A4,
@@ -3657,7 +3690,9 @@ def generate_program_student_list(program, level, students_df):
     header_data = [
         [
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
-            Paragraph("UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA", styles["CustomTitle"]),
+            Paragraph(
+                "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA", styles["CustomTitle"]
+            ),
             Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     ]
@@ -3680,9 +3715,13 @@ def generate_program_student_list(program, level, students_df):
 
     for _, student in students_df.iterrows():
         student_data = []
-        if student["passport_photo_path"] and os.path.exists(student["passport_photo_path"]):
+        if student["passport_photo_path"] and os.path.exists(
+            student["passport_photo_path"]
+        ):
             try:
-                photo = Image(student["passport_photo_path"], width=1 * inch, height=1 * inch)
+                photo = Image(
+                    student["passport_photo_path"], width=1 * inch, height=1 * inch
+                )
                 student_data.append(
                     [
                         photo,
@@ -3735,7 +3774,12 @@ def generate_program_student_list(program, level, students_df):
         elements.append(student_table)
         elements.append(Spacer(1, 10))
     elements.append(Spacer(1, 20))
-    elements.append(Paragraph(f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles["Normal"]))
+    elements.append(
+        Paragraph(
+            f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            styles["Normal"],
+        )
+    )
     doc.build(elements)
     return filename
 
@@ -3801,36 +3845,14 @@ def download_receipts():
 
 
 def save_uploaded_file(uploaded_file, directory):
-    """
-    Saves an uploaded file to the specified directory using its original filename.
-    If a file with the same name already exists, appends a timestamp (before the extension)
-    to avoid overwriting the existing file.
-    
-    This ensures that the file path stored in the database matches exactly the file on disk,
-    thus avoiding errors like "No such file or directory" when accessing uploaded documents.
-    
-    Args:
-        uploaded_file: The uploaded file object from Streamlit.
-        directory: The directory where the file should be saved.
-        
-    Returns:
-        The file path of the saved file, or None if no file was uploaded.
-    """
     if uploaded_file is not None:
-        # Ensure the target directory exists.
         if not os.path.exists(directory):
             os.makedirs(directory)
-        
-        # Use the original filename.
         file_path = os.path.join(directory, uploaded_file.name)
-        
-        # If there's a filename conflict, append a timestamp before the file extension.
         if os.path.exists(file_path):
             base, ext = os.path.splitext(uploaded_file.name)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             file_path = os.path.join(directory, f"{base}_{timestamp}{ext}")
-        
-        # Save the file.
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
         return file_path
@@ -3847,15 +3869,15 @@ def insert_student_info(c, form_data, file_paths):
             guardian_name, guardian_relationship, guardian_occupation,
             guardian_address, guardian_telephone, previous_school,
             qualification_type, completion_year, aggregate_score,
-            ghana_card_path, passport_photo_path, transcript_path,
-            certificate_path, receipt_path, receipt_amount,
+            ghana_card_path, passport_photo_path, certificate_path,
+            transcript_path, receipt_path, receipt_amount,
             approval_status, created_at, programme
         ) VALUES (
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
     """
-
+    # transcript_path and receipt_path are set to None.
     params = (
         form_data["student_id"],
         form_data["surname"],
@@ -3886,43 +3908,44 @@ def insert_student_info(c, form_data, file_paths):
         form_data["aggregate_score"],
         file_paths.get("ghana_card_path"),
         file_paths.get("passport_photo_path"),
-        file_paths.get("transcript_path"),
         file_paths.get("certificate_path"),
-        file_paths.get("receipt_path"),
-        form_data.get("receipt_amount", 0.0),
+        None,  # transcript_path removed
+        None,  # receipt_path removed
+        0.0,   # receipt_amount default=0
         "pending",
         datetime.now(),
         form_data.get("programme", ""),
     )
-
     c.execute(insert_query, params)
 
 
 ##############################
 # New Email Sending Function #
 ##############################
-
+from email.mime.application import MIMEApplication  # For PDF attachments
 
 def send_emails():
+    """
+    Updated function to send emails to students with an optional PDF attachment.
+    The user can upload a PDF file that will be attached to the email.
+    """
     st.header("Send Emails to Students")
-    recipient_type = st.selectbox(
-        "Select Recipient Group", ["All Students", "By Programme", "Individual Student"]
-    )
+    recipient_type = st.selectbox("Select Recipient Group", ["All Students", "By Programme", "Individual Student"])
     subject = st.text_input("Email Subject")
     message_body = st.text_area("Email Message")
+
+    # Optional PDF attachment uploader
+    attachment_file = st.file_uploader("Upload PDF Attachment (Optional)", type=["pdf"])
 
     # For individual student, allow entering student ID.
     individual_id = None
     selected_programmes = []
     if recipient_type == "By Programme":
-        selected_programmes = st.multiselect(
-            "Select Programme(s)", options=["CIMG", "CIM-UK", "ICAG", "ACCA"]
-        )
+        selected_programmes = st.multiselect("Select Programme(s)", options=["CIMG", "CIM-UK", "ICAG", "ACCA"])
     elif recipient_type == "Individual Student":
         individual_id = st.text_input("Enter Student ID")
 
     if st.button("Send Email"):
-        # Build recipients list based on selection.
         conn = sqlite3.connect("student_registration.db")
         cur = conn.cursor()
         recipients = []
@@ -3939,10 +3962,7 @@ def send_emails():
                 recipients = [email for (email,) in results if email]
         elif recipient_type == "Individual Student":
             if individual_id:
-                cur.execute(
-                    "SELECT email FROM student_info WHERE student_id = ?",
-                    (individual_id,),
-                )
+                cur.execute("SELECT email FROM student_info WHERE student_id = ?", (individual_id,))
                 result = cur.fetchone()
                 if result and result[0]:
                     recipients = [result[0]]
@@ -3953,7 +3973,6 @@ def send_emails():
             st.error("No email addresses found for the selected criteria.")
             return
 
-        # Send email using SMTP.
         try:
             server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
             server.starttls()
@@ -3964,6 +3983,16 @@ def send_emails():
                 msg["To"] = recipient
                 msg["Subject"] = subject
                 msg.attach(MIMEText(message_body, "plain"))
+
+                # If a PDF attachment was uploaded, attach it.
+                if attachment_file is not None:
+                    # Save the uploaded PDF temporarily if needed.
+                    attachment_path = save_uploaded_file(attachment_file, "uploads")
+                    if attachment_path and os.path.exists(attachment_path):
+                        with open(attachment_path, "rb") as f:
+                            pdf_attachment = MIMEApplication(f.read(), _subtype="pdf")
+                        pdf_attachment.add_header("Content-Disposition", "attachment", filename=os.path.basename(attachment_path))
+                        msg.attach(pdf_attachment)
                 server.sendmail(SMTP_USERNAME, recipient, msg.as_string())
             server.quit()
             st.success("Emails sent successfully!")
@@ -4143,7 +4172,6 @@ def download_forms():
     conn.close()
 
 
-
 import zipfile
 import shutil
 from datetime import datetime
@@ -4151,6 +4179,7 @@ import sqlite3
 from typing import Dict, List, Optional, Tuple
 import logging
 import json
+
 
 class DocumentUploadHandler:
     """
@@ -4164,7 +4193,7 @@ class DocumentUploadHandler:
         "ghana_card": [".pdf", ".jpg", ".jpeg", ".png"],
         "passport_photo": [".jpg", ".jpeg", ".png"],
         "transcript": [".pdf", ".jpeg", ".jpg", ".png"],
-        "certificate": [".pdf", ".jpg", ".jpeg", ".png" ],
+        "certificate": [".pdf", ".jpg", ".jpeg", ".png"],
         "receipt": [".pdf", ".jpg", ".jpeg", ".png"],
     }
 
@@ -4280,7 +4309,9 @@ class DocumentUploadHandler:
 
         return student_documents
 
-    def _process_registration_documents(self, temp_dir: str) -> Dict[str, Dict[str, str]]:
+    def _process_registration_documents(
+        self, temp_dir: str
+    ) -> Dict[str, Dict[str, str]]:
         """Process course registration documents from the extracted zip file."""
         reg_docs = {}
         reg_dir = os.path.join(temp_dir, "course_registration_receipts")
@@ -4296,14 +4327,18 @@ class DocumentUploadHandler:
             reg_docs[reg_id] = {}
 
             # Process registration receipt
-            receipt_file = self._find_document(reg_folder, "receipt", self.ALLOWED_EXTENSIONS["receipt"])
+            receipt_file = self._find_document(
+                reg_folder, "receipt", self.ALLOWED_EXTENSIONS["receipt"]
+            )
             if receipt_file:
                 new_path = self._save_document(receipt_file, reg_id, "receipt")
                 reg_docs[reg_id]["receipt_path"] = new_path
 
         return reg_docs
 
-    def _find_document(self, directory: str, doc_type: str, allowed_extensions: List[str]) -> Optional[str]:
+    def _find_document(
+        self, directory: str, doc_type: str, allowed_extensions: List[str]
+    ) -> Optional[str]:
         """Find a document of the specified type in the directory."""
         for file in os.listdir(directory):
             ext = os.path.splitext(file)[1].lower()
@@ -4320,7 +4355,11 @@ class DocumentUploadHandler:
         shutil.copy2(source_path, dest_path)
         return dest_path
 
-    def _update_database(self, student_documents: Dict[str, Dict[str, str]], reg_docs: Dict[str, Dict[str, str]]):
+    def _update_database(
+        self,
+        student_documents: Dict[str, Dict[str, str]],
+        reg_docs: Dict[str, Dict[str, str]],
+    ):
         """Update database with new document paths."""
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
@@ -4330,7 +4369,9 @@ class DocumentUploadHandler:
             for student_id, docs in student_documents.items():
                 if docs:
                     update_fields = ", ".join(f"{key} = ?" for key in docs.keys())
-                    query = f"UPDATE student_info SET {update_fields} WHERE student_id = ?"
+                    query = (
+                        f"UPDATE student_info SET {update_fields} WHERE student_id = ?"
+                    )
                     c.execute(query, list(docs.values()) + [student_id])
 
             # Update registration documents
@@ -4357,16 +4398,24 @@ class DocumentUploadHandler:
                 files = zip_ref.namelist()
 
                 # Check for main directories
-                if (not any(f.startswith("student_documents/") for f in files) and 
-                    not any(f.startswith("course_registration_receipts/") for f in files)):
-                    return (False, "Missing required directories: student_documents or course_registration_receipts")
+                if not any(
+                    f.startswith("student_documents/") for f in files
+                ) and not any(
+                    f.startswith("course_registration_receipts/") for f in files
+                ):
+                    return (
+                        False,
+                        "Missing required directories: student_documents or course_registration_receipts",
+                    )
 
                 # Validate file extensions
                 for file in files:
                     if file.endswith("/"):  # Skip directories
                         continue
                     ext = os.path.splitext(file)[1].lower()
-                    if not any(ext in exts for exts in self.ALLOWED_EXTENSIONS.values()):
+                    if not any(
+                        ext in exts for exts in self.ALLOWED_EXTENSIONS.values()
+                    ):
                         return False, f"Invalid file extension in: {file}"
 
                 return True, "Zip file structure is valid"
@@ -4375,7 +4424,8 @@ class DocumentUploadHandler:
             return False, "Invalid zip file"
         except Exception as e:
             return False, f"Error validating zip file: {str(e)}"
-  
+
+
 # End of DocumentUploadHandler
 
 
@@ -4384,86 +4434,65 @@ class NotificationSystem:
         self.setup_notification_table()
 
     def setup_notification_table(self):
-        """Initialize the notifications table in the database"""
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
-
-        # Create notifications table
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS notifications (
                 notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 recipient_id TEXT,
-                recipient_type TEXT,  -- 'student', 'program', or 'all'
+                recipient_type TEXT,
                 title TEXT,
                 message TEXT,
-                notification_type TEXT,  -- 'info', 'warning', 'success', 'error'
+                notification_type TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 read_at DATETIME,
-                metadata TEXT,  -- JSON field for additional data
-                expires_at DATETIME,
-                FOREIGN KEY (recipient_id) REFERENCES student_info (student_id)
+                metadata TEXT,
+                expires_at DATETIME
             )
-        """
+            """
         )
-
-        # Create notification_reads table for tracking read status
         c.execute(
             """
             CREATE TABLE IF NOT EXISTS notification_reads (
                 notification_id INTEGER,
                 student_id TEXT,
                 read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (notification_id, student_id),
-                FOREIGN KEY (notification_id) REFERENCES notifications (notification_id),
-                FOREIGN KEY (student_id) REFERENCES student_info (student_id)
+                PRIMARY KEY (notification_id, student_id)
             )
-        """
+            """
         )
-
         conn.commit()
         conn.close()
+        
+        
+        
 
-    def create_notification(
-        self,
-        title: str,
-        message: str,
-        recipient_type: str,
-        recipient_id: Union[str, None] = None,
-        notification_type: str = "info",
-        metadata: Dict = None,
-        expires_at: Union[datetime, None] = None,
-    ) -> int:
-        """
-        Create a new notification
-        Returns the notification ID
-        """
+    def create_notification(self, title, message, recipient_type, recipient_id=None,
+                            notification_type="info", metadata=None, expires_at=None):
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
-
-        try:
-            c.execute(
-                """
-                INSERT INTO notifications (
-                    recipient_id, recipient_type, title, message,
-                    notification_type, metadata, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        c.execute(
+            """
+            INSERT INTO notifications (
+                recipient_id, recipient_type, title, message,
+                notification_type, metadata, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-                (
-                    recipient_id,
-                    recipient_type,
-                    title,
-                    message,
-                    notification_type,
-                    json.dumps(metadata) if metadata else None,
-                    expires_at.isoformat() if expires_at else None,
-                ),
+            (
+                recipient_id,
+                recipient_type,
+                title,
+                message,
+                notification_type,
+                json.dumps(metadata) if metadata else None,
+                expires_at.isoformat() if expires_at else None,
             )
-            notification_id = c.lastrowid
-            conn.commit()
-            return notification_id
-        finally:
-            conn.close()
+        )
+        notification_id = c.lastrowid
+        conn.commit()
+        conn.close()
+        return notification_id
 
     def get_notifications(
         self, student_id: str, include_read: bool = False, limit: int = 50
@@ -4528,76 +4557,45 @@ class NotificationSystem:
         finally:
             conn.close()
 
-    def mark_as_read(self, notification_id: int, student_id: str):
-        """Mark a notification as read for a specific student"""
+    def mark_as_read(self, notification_id, student_id):
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
+        c.execute(
+            "INSERT OR IGNORE INTO notification_reads (notification_id, student_id) VALUES (?, ?)",
+            (notification_id, student_id),
+        )
+        conn.commit()
+        conn.close()
 
-        try:
-            c.execute(
-                """
-                INSERT OR IGNORE INTO notification_reads (
-                    notification_id, student_id
-                ) VALUES (?, ?)
-            """,
-                (notification_id, student_id),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-    def mark_all_as_read(self, student_id: str):
-        """Mark all notifications as read for a specific student"""
+    def mark_all_as_read(self, student_id):
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
-
-        try:
-            # Get all unread notifications for the student
-            c.execute(
-                """
-                INSERT INTO notification_reads (notification_id, student_id)
-                SELECT n.notification_id, ?
-                FROM notifications n
-                LEFT JOIN notification_reads nr 
-                    ON n.notification_id = nr.notification_id 
-                    AND nr.student_id = ?
-                WHERE nr.read_at IS NULL
-                AND (
-                    n.recipient_id = ? 
-                    OR n.recipient_type = 'all'
-                    OR (
-                        n.recipient_type = 'program' 
-                        AND n.recipient_id = (
-                            SELECT programme 
-                            FROM student_info 
-                            WHERE student_id = ?
-                        )
+        c.execute(
+            """
+            INSERT INTO notification_reads (notification_id, student_id)
+            SELECT n.notification_id, ?
+            FROM notifications n
+            LEFT JOIN notification_reads nr ON n.notification_id = nr.notification_id AND nr.student_id = ?
+            WHERE nr.read_at IS NULL AND (
+                n.recipient_id = ? OR n.recipient_type = 'all' OR (
+                    n.recipient_type = 'program' AND n.recipient_id = (
+                        SELECT programme FROM student_info WHERE student_id = ?
                     )
                 )
-            """,
-                (student_id, student_id, student_id, student_id),
             )
-            conn.commit()
-        finally:
-            conn.close()
+            """,
+            (student_id, student_id, student_id, student_id),
+        )
+        conn.commit()
+        conn.close()
 
-    def delete_notification(self, notification_id: int):
-        """Delete a notification"""
+    def delete_notification(self, notification_id):
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
-
-        try:
-            c.execute(
-                "DELETE FROM notification_reads WHERE notification_id = ?",
-                (notification_id,),
-            )
-            c.execute(
-                "DELETE FROM notifications WHERE notification_id = ?",
-                (notification_id,),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        c.execute("DELETE FROM notification_reads WHERE notification_id = ?", (notification_id,))
+        c.execute("DELETE FROM notifications WHERE notification_id = ?", (notification_id,))
+        conn.commit()
+        conn.close()
 
 
 def display_notifications(notifications: List[Dict]):
@@ -4635,48 +4633,32 @@ def admin_notification_interface():
     tab1, tab2 = st.tabs(["Create Notification", "View/Manage Notifications"])
 
     with tab1:
-        recipient_type = st.selectbox(
-            "Recipient Type",
-            ["all", "program", "student"],
-            help="Select who should receive this notification",
-        )
-
+        recipient_type = st.selectbox("Recipient Type", ["all", "program", "student"],
+                                        help="Select who should receive this notification")
         recipient_id = None
         if recipient_type == "program":
-            recipient_id = st.selectbox(
-                "Select Program", ["CIMG", "CIM-UK", "ICAG", "ACCA"]
-            )
+            recipient_id = st.selectbox("Select Program", ["CIMG", "CIM-UK", "ICAG", "ACCA"])
         elif recipient_type == "student":
-            # Get list of student IDs from database
             conn = sqlite3.connect("student_registration.db")
             c = conn.cursor()
-            c.execute(
-                """
-                SELECT student_id, surname, other_names 
-                FROM student_info 
-                ORDER BY surname, other_names
-            """
-            )
+            c.execute("SELECT student_id, surname, other_names FROM student_info ORDER BY surname, other_names")
             students = c.fetchall()
             conn.close()
-
             if students:
-                options = [
-                    f"{id} - {surname} {other_names}"
-                    for id, surname, other_names in students
-                ]
+                options = [f"{id} - {surname} {other_names}" for id, surname, other_names in students]
                 selected = st.selectbox("Select Student", options)
                 recipient_id = selected.split(" - ")[0]
             else:
                 st.warning("No students found in database")
                 return
 
-        notification_type = st.selectbox(
-            "Notification Type", ["info", "warning", "success", "error"]
-        )
 
+        notification_type = st.selectbox("Notification Type", ["info", "warning", "success", "error"])
         title = st.text_input("Notification Title")
         message = st.text_area("Notification Message")
+
+        # File uploader for optional PDF attachment.
+        attachment_file = st.file_uploader("Upload PDF Attachment (Optional)", type=["pdf"])
 
         col1, col2 = st.columns(2)
         with col1:
@@ -4684,13 +4666,11 @@ def admin_notification_interface():
         with col2:
             include_expiry = st.checkbox("Set Expiration")
 
-        metadata = None
+        metadata = {}
         if include_metadata:
-            metadata_str = st.text_area(
-                "Additional Data (JSON format)", help="Enter valid JSON data"
-            )
+            metadata_str = st.text_area("Additional Data (JSON format)", help="Enter valid JSON data")
             try:
-                metadata = json.loads(metadata_str) if metadata_str else None
+                metadata = json.loads(metadata_str) if metadata_str else {}
             except json.JSONDecodeError:
                 st.error("Invalid JSON format")
                 return
@@ -4700,6 +4680,13 @@ def admin_notification_interface():
             expires_at = st.date_input("Expiration Date")
             if expires_at:
                 expires_at = datetime.combine(expires_at, datetime.min.time())
+        
+        # If a PDF attachment was provided, save it and add its path to metadata.
+        if attachment_file is not None:
+            attachment_path = save_uploaded_file(attachment_file, "uploads")
+            if attachment_path:
+                metadata["attachment_path"] = attachment_path
+
 
         if st.button("Send Notification"):
             if not title or not message:
@@ -4714,7 +4701,7 @@ def admin_notification_interface():
                     recipient_type=recipient_type,
                     recipient_id=recipient_id,
                     notification_type=notification_type,
-                    metadata=metadata,
+                    metadata=metadata if metadata else None,
                     expires_at=expires_at,
                 )
                 st.success(f"Notification created successfully! ID: {notification_id}")
@@ -4724,25 +4711,16 @@ def admin_notification_interface():
     with tab2:
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
-
         c.execute(
             """
-            SELECT 
-                n.notification_id,
-                n.title,
-                n.message,
-                n.recipient_type,
-                n.recipient_id,
-                n.created_at,
-                COUNT(nr.student_id) as read_count
+            SELECT n.notification_id, n.title, n.message, n.recipient_type,
+                   n.recipient_id, n.created_at, COUNT(nr.student_id) as read_count
             FROM notifications n
-            LEFT JOIN notification_reads nr 
-                ON n.notification_id = nr.notification_id
+            LEFT JOIN notification_reads nr ON n.notification_id = nr.notification_id
             GROUP BY n.notification_id
             ORDER BY n.created_at DESC
-        """
+            """
         )
-
         notifications = c.fetchall()
         conn.close()
 
@@ -4753,7 +4731,6 @@ def admin_notification_interface():
                     st.write(f"**Type:** {notification[3]}")
                     st.write(f"**Recipient:** {notification[4] or 'All'}")
                     st.write(f"**Read by:** {notification[6]} students")
-
                     if st.button("Delete", key=f"del_{notification[0]}"):
                         try:
                             notification_system = NotificationSystem()
@@ -4766,66 +4743,696 @@ def admin_notification_interface():
             st.info("No notifications found")
 
 
-def main():
-    st.set_page_config(
-        page_title="Student Registration System",
-        page_icon="🎓",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+# Fetch Student Information from Database
+def get_student_info(student_id):
+    conn = sqlite3.connect("student_registration.db")
+    query = "SELECT * FROM student_info WHERE student_id = ?"
+    student = pd.read_sql(query, conn, params=(student_id,)).to_dict("records")
+    conn.close()
+    return student[0] if student else None
 
+
+def get_student_registrations(student_id: str) -> list:
+    # Retrieve course registrations for student.
+    conn = sqlite3.connect("student_registration.db")
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM course_registration WHERE student_id = ? ORDER BY date_registered DESC",
+        (student_id,),
+    )
+    registrations = cur.fetchall()
+    conn.close()
+    return [dict(reg) for reg in registrations]
+
+
+def display_profile(student):
+    st.subheader("👤 Profile Information")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        if student.get("passport_photo_path") and os.path.exists(
+            student["passport_photo_path"]
+        ):
+            img = PILImage.open(student["passport_photo_path"])
+            st.image(img, width=200, caption="Profile Photo")
+        else:
+            st.image("https://via.placeholder.com/200", caption="Profile Photo")
+    with col2:
+        st.markdown(
+            f"**Full Name:** {student.get('surname', '')} {student.get('other_names', '')}"
+        )
+        st.markdown(f"**Student ID:** {student.get('student_id', '')}")
+        st.markdown(f"**Email:** {student.get('email', '')}")
+        st.markdown(f"**Phone:** {student.get('telephone', '')}")
+
+
+def display_courses(registrations: list):
+    st.subheader("Course Registrations")
+    if registrations:
+        for reg in registrations:
+            st.markdown(
+                f"**Registration ID:** {reg.get('registration_id')} | **Date:** {reg.get('date_registered')}"
+            )
+            st.write(f"**Programme:** {reg.get('programme', '')}")
+            st.write(
+                f"**Level:** {reg.get('level', '')} | **Semester:** {reg.get('semester', '')}"
+            )
+            if reg.get("courses"):
+                courses = reg["courses"].split("\n")
+                for course in courses:
+                    if "|" in course:
+                        code, title, credits = course.split("|")
+                        st.write(f"- {code}: {title} ({credits} credits)")
+            st.markdown("---")
+    else:
+        st.info("No course registrations found.")
+
+
+def display_documents(student: dict):
+    st.subheader("Documents")
+    documents = {
+        "Ghana Card": student.get("ghana_card_path"),
+        "Passport Photo": student.get("passport_photo_path"),
+        "Transcript": student.get("transcript_path"),
+        "Certificate": student.get("certificate_path"),
+        "Receipt": student.get("receipt_path"),
+    }
+    for doc_name, doc_path in documents.items():
+        st.write(f"**{doc_name}:**")
+        if doc_path and os.path.exists(doc_path):
+            if doc_path.lower().endswith((".jpg", ".jpeg", ".png")):
+                try:
+                    img = PILImage.open(doc_path)
+                    st.image(img, width=200, caption=doc_name)
+                except Exception as e:
+                    st.error(f"Error displaying image: {e}")
+            else:
+                st.write(f"[View {doc_name}]({doc_path})")
+        else:
+            st.info(f"{doc_name} not uploaded.")
+        st.markdown("---")
+
+
+def display_proof(registrations: list):
+    st.subheader("Proof of Registration")
+    if registrations:
+        for reg in registrations:
+            st.markdown(f"**Registration Record (ID: {reg.get('registration_id')})**")
+            if st.button(
+                f"Download Proof (ID: {reg.get('registration_id')})",
+                key=f"download_{reg.get('registration_id')}",
+            ):
+                # Assume generate_course_registration_pdf() is defined elsewhere.
+                pdf_file = generate_course_registration_pdf(reg)
+                if os.path.exists(pdf_file):
+                    with open(pdf_file, "rb") as f:
+                        pdf_bytes = f.read()
+                    st.download_button(
+                        label="Download PDF",
+                        data=pdf_bytes,
+                        file_name=pdf_file,
+                        mime="application/pdf",
+                    )
+                    os.remove(pdf_file)
+                else:
+                    st.error("Error generating PDF.")
+            st.markdown("---")
+    else:
+        st.info("No registrations available for proof of registration.")
+
+
+# Load Custom CSS for Improved UI
+def load_custom_css():
     st.markdown(
         """
         <style>
-        .main {
-            padding: 2rem;
-        }
-        .stButton>button {
-            width: 100%;
-            background-color: #4CAF50;
-            color: white;
-        }
-        .upload-section {
-            padding: 1rem;
-            border-radius: 5px;
-            background-color: #f0f2f6;
-            margin: 1rem 0;
-        }
-        .login-form {
-            max-width: 400px;
-            margin: 0 auto;
-            padding: 2rem;
-            background-color: #f8f9fa;
-            border-radius: 10px;
-        }
+        .main-container { max-width: 1200px; margin: auto; padding: 2rem; }
+        .header { background: linear-gradient(90deg, #4CAF50, #81C784); color: white; padding: 1.5rem; text-align: center; border-radius: 8px; margin-bottom: 2rem; font-size: 1.5rem; font-weight: bold; }
+        div[data-baseweb="tab-list"] { overflow-x: auto; white-space: nowrap; }
+        .stTabs [data-baseweb="tab"] { flex-grow: 1; min-width: 120px; padding: 1rem; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); }
+        .stTabs [data-baseweb="tab"][aria-selected="true"] { background: #1e3c72; color: white; }
+        .profile-card { background: white; border-radius: 10px; padding: 1.5rem; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); }
+        .profile-image { border-radius: 50%; border: 3px solid #1e3c72; padding: 3px; }
         </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def modern_student_portal():
+    """
+    Enhanced student portal with modern UI and responsive design.
+    Dummy helper functions are used below for illustration.
+    """
+    # Load custom CSS
+    load_custom_css()
+
+    # Check if student is logged in (dummy session variable)
+    student_id = st.session_state.get("student_logged_in")
+    if not student_id:
+        st.error("You must be logged in to view this page.")
+        return
+
+    # Fetch student data (dummy implementation; replace with real DB functions)
+    student = get_student_info(student_id)
+    registrations = get_student_registrations(student_id)
+
+    # Fetch notifications (dummy NotificationSystem)
+    notification_system = NotificationSystem()
+    notifications = notification_system.get_notifications(student_id)
+    unread_count = len([n for n in notifications if not n["is_read"]])
+
+    # Header Section with Quick Stats
+    st.markdown(
+        f"""
+    <div class="portal-header">
+        <h1>Welcome, {student.get('surname', '')} {student.get('other_names', '')}</h1>
+        <p>Student ID: {student.get('student_id', '')}</p>
+    </div>
     """,
         unsafe_allow_html=True,
     )
 
+    # Quick Stats Grid
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(
+            f"""
+        <div class="stat-card">
+            <h3>Programme</h3>
+            <p>{student.get('programme', 'N/A')}</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f"""
+        <div class="stat-card">
+            <h3>Notifications</h3>
+            <p>{unread_count} unread</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+    with col3:
+        st.markdown(
+            f"""
+        <div class="stat-card">
+            <h3>Registrations</h3>
+            <p>{len(registrations)} total</p>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+    # Main Content Tabs - Mobile Friendly Navigation
+    tabs = ["Dashboard", "Profile", "Courses", "Documents", "Notifications"]
+    selected_tab = st.radio("Navigation", tabs, horizontal=True)
+
+    if selected_tab == "Dashboard":
+        st.subheader("📊 Dashboard")
+        st.markdown("### Recent Activity")
+        if registrations:
+            latest_reg = registrations[0]
+            st.info(
+                f"Latest registration: {latest_reg.get('programme')} - {latest_reg.get('semester')} Semester"
+            )
+        # Quick Actions
+        st.markdown("### Quick Actions")
+        qa_col1, qa_col2 = st.columns(2)
+        with qa_col1:
+            if st.button("📄 Download Registration Proof", use_container_width=True):
+                if registrations:
+                    pdf_file = generate_course_registration_pdf(registrations[0])
+                    with open(pdf_file, "rb") as f:
+                        st.download_button(
+                            label="Download PDF",
+                            data=f,
+                            file_name=pdf_file,
+                            mime="application/pdf",
+                            use_container_width=True,
+                        )
+        with qa_col2:
+            if st.button("📝 Update Profile", use_container_width=True):
+                st.session_state.show_profile_edit = True
+    elif selected_tab == "Profile":
+        display_modern_profile(student)
+    elif selected_tab == "Courses":
+        display_modern_courses(registrations)
+    elif selected_tab == "Documents":
+        display_modern_documents(student)
+    elif selected_tab == "Notifications":
+        display_modern_notifications(notifications, notification_system, student_id)
+
+
+
+
+def get_student_info(student_id):
+    # Dummy implementation; replace with actual database retrieval
+    return {
+        "surname": "Doe",
+        "other_names": "John",
+        "student_id": student_id,
+        "programme": "Computer Science",
+        "email": "john.doe@example.com",
+        "telephone": "1234567890",
+        "residential_address": "123 Main St",
+        "postal_address": "PO Box 456",
+        "last_login": "2023-10-10",
+        "passport_photo_path": "path/to/photo.jpg",
+    }
+
+
+def get_student_registrations(student_id):
+    # Dummy implementation; replace with actual database retrieval
+    return [
+        {
+            "registration_id": 1,
+            "programme": "Computer Science",
+            "semester": "First",
+            "level": "1",
+            "academic_year": "2023/2024",
+            "courses": "CS101|Intro to CS|3\nCS102|Data Structures|3",
+        }
+    ]
+
+
+
+
+def generate_course_registration_pdf(registration):
+    # Dummy PDF generation function; replace with actual PDF library usage (e.g., ReportLab)
+    pdf_filename = f"registration_{registration.get('registration_id')}.pdf"
+    with open(pdf_filename, "w") as f:
+        f.write("PDF Content for Registration")
+    return pdf_filename
+
+
+def display_modern_profile(student):
+    st.subheader("👤 Profile Information")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        if student.get("passport_photo_path") and os.path.exists(
+            student["passport_photo_path"]
+        ):
+            try:
+                img = PILImage.open(student["passport_photo_path"])
+                st.image(img, width=200, use_column_width=True, caption="Profile Photo")
+            except Exception:
+                st.image(
+                    "https://via.placeholder.com/200",
+                    use_column_width=True,
+                    caption="Profile Photo",
+                )
+        else:
+            st.image(
+                "https://via.placeholder.com/200",
+                use_column_width=True,
+                caption="Profile Photo",
+            )
+    with col2:
+        st.markdown("### Personal Details")
+        info_grid = {
+            "Full Name": f"{student.get('surname', '')} {student.get('other_names', '')}",
+            "Student ID": student.get("student_id", ""),
+            "Programme": student.get("programme", ""),
+            "Gender": student.get("gender", "N/A"),
+            "Date of Birth": student.get("date_of_birth", "N/A"),
+            "Nationality": student.get("nationality", "N/A"),
+        }
+        for key, value in info_grid.items():
+            st.markdown(f"**{key}:** {value}")
+        st.markdown("### Contact Information")
+        contact_col1, contact_col2 = st.columns(2)
+        with contact_col1:
+            st.markdown(f"**Email:** {student.get('email', '')}")
+            st.markdown(f"**Phone:** {student.get('telephone', '')}")
+        with contact_col2:
+            st.markdown(f"**Address:** {student.get('residential_address', '')}")
+            st.markdown(f"**Postal:** {student.get('postal_address', '')}")
+
+
+def display_modern_courses(registrations):
+    st.subheader("📚 Course Registrations")
+    if not registrations:
+        st.info("No course registrations found.")
+        return
+    for reg in registrations:
+        with st.expander(
+            f"📘 {reg.get('programme')} - {reg.get('semester')} Semester", expanded=True
+        ):
+            st.markdown(f"**Level:** {reg.get('level', '')}")
+            st.markdown(f"**Academic Year:** {reg.get('academic_year', '')}")
+            if reg.get("courses"):
+                st.markdown("### Registered Courses")
+                courses = reg["courses"].split("\n")
+                for course in courses:
+                    if "|" in course:
+                        code, title, credits = course.split("|")
+                        st.markdown(f"- **{code}**: {title} ({credits} credits)")
+            st.markdown("### Semester Progress")
+            progress = 0.65  # Dummy value; calculate with actual data
+            st.progress(progress)
+            st.markdown(f"Semester Progress: {int(progress * 100)}%")
+
+
+def display_modern_documents(student):
+    st.subheader("📑 Documents")
+    documents = {
+        "Ghana Card": student.get("ghana_card_path"),
+        "Passport Photo": student.get("passport_photo_path"),
+        "Transcript": student.get("transcript_path"),
+        "Certificate": student.get("certificate_path"),
+        "Receipt": student.get("receipt_path"),
+    }
+    doc_icons = {
+        "Ghana Card": "🪪",
+        "Passport Photo": "📸",
+        "Transcript": "📄",
+        "Certificate": "🎓",
+        "Receipt": "🧾",
+    }
+    for doc_name, doc_path in documents.items():
+        st.markdown(f"**{doc_icons.get(doc_name, '📄')} {doc_name}:**")
+        if doc_path and os.path.exists(doc_path):
+            if doc_path.lower().endswith((".jpg", ".jpeg", ".png")):
+                try:
+                    img = PILImage.open(doc_path)
+                    st.image(img, width=300)
+                except Exception:
+                    st.error(f"Error displaying {doc_name}")
+            else:
+                st.markdown(f"[View {doc_name}]({doc_path})")
+            st.download_button(
+                f"Download {doc_name}",
+                open(doc_path, "rb").read(),
+                file_name=os.path.basename(doc_path),
+                mime="application/octet-stream",
+            )
+        else:
+            st.warning(f"No {doc_name} uploaded")
+        st.markdown("---")
+
+
+def display_modern_notifications(notifications, notification_system, student_id):
+    st.subheader("🔔 Notifications")
+    if not notifications:
+        st.info("No notifications to display")
+        return
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        filter_type = st.selectbox("Filter by", ["All", "Unread", "Read"])
+    with col2:
+        if st.button("Mark All Read", use_container_width=True):
+            notification_system.mark_all_as_read(student_id)
+            st.rerun()
+    filtered_notifications = notifications
+    if filter_type == "Unread":
+        filtered_notifications = [n for n in notifications if not n["is_read"]]
+    elif filter_type == "Read":
+        filtered_notifications = [n for n in notifications if n["is_read"]]
+    for notif in filtered_notifications:
+        with st.container():
+            st.markdown(
+                f"""
+            <div style="padding: 1rem; margin: 0.5rem 0; background: white; border-radius: 8px; 
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 4px solid {get_notification_color(notif['type'])};">
+                <h4>{notif['title']}</h4>
+                <p>{notif['message']}</p>
+                <small style="color: #666;">{notif['created_at']} • {"Read" if notif["is_read"] else "Unread"}</small>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+            if not notif["is_read"]:
+                if st.button("Mark as Read", key=f"read_{notif['id']}"):
+                    notification_system.mark_as_read(notif["id"], student_id)
+                    st.rerun()
+
+
+def get_notification_color(notification_type):
+    colors = {
+        "info": "#2196F3",
+        "success": "#4CAF50",
+        "warning": "#FFC107",
+        "error": "#F44336",
+    }
+    return colors.get(notification_type, "#2196F3")
+
+def initialize_app():
     if "db_initialized" not in st.session_state:
-        reset_db()
+        init_db()
         st.session_state.db_initialized = True
 
     if "admin_logged_in" not in st.session_state:
         st.session_state.admin_logged_in = False
+        st.session_state.admin_logged_in = False
+        
+class RegistrationConstraintsManager:
+    """
+    Manages registration constraints and storage cleanup.
+    Prevents duplicate submissions and cleans up old files.
+    """
+    
+    def __init__(self, db_path: str = "student_registration.db"):
+        self.db_path = db_path
+        self.memory_threshold = 0.85  # 85% memory usage threshold
+        
+    @contextmanager
+    def optimized_connection(self):
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            yield conn
+        finally:
+            if conn:
+                conn.close()
+            self._optimize_memory()
+
+    def _optimize_memory(self):
+        memory_usage = psutil.Process(os.getpid()).memory_percent()
+        if memory_usage > self.memory_threshold:
+            gc.collect()
+            
+    def check_existing_registration(self, student_id: str) -> Tuple[bool, Optional[str]]:
+        """
+        Check if student already has a registration.
+        Returns (has_registration, status)
+        """
+        with self.optimized_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT approval_status FROM student_info WHERE student_id = ?",
+                (student_id,)
+            )
+            result = cursor.fetchone()
+            
+            if result:
+                return True, result[0]
+            return False, None
+
+    def validate_passport_photo(self, photo) -> Tuple[bool, str]:
+        """
+        Validate passport photo requirements
+        Returns (is_valid, message)
+        """
+        if photo is None:
+            return False, "Passport photo is mandatory"
+            
+        try:
+            image = Image.open(photo)
+            
+            # Check image format
+            if image.format not in ['JPEG', 'PNG']:
+                return False, "Photo must be in JPEG or PNG format"
+                
+            # Check dimensions (e.g., minimum 200x200, maximum 1000x1000)
+            if image.size[0] < 200 or image.size[1] < 200:
+                return False, "Photo dimensions too small (minimum 200x200 pixels)"
+            if image.size[0] > 1000 or image.size[1] > 1000:
+                return False, "Photo dimensions too large (maximum 1000x1000 pixels)"
+                
+            # Check file size (max 5MB)
+            photo.seek(0, os.SEEK_END)
+            file_size = photo.tell()
+            if file_size > 5 * 1024 * 1024:  # 5MB in bytes
+                return False, "Photo file size too large (maximum 5MB)"
+                
+            return True, "Photo validation successful"
+            
+        except Exception as e:
+            return False, f"Error validating photo: {str(e)}"
+
+    def can_submit_course_registration(self, student_id: str) -> Tuple[bool, str]:
+        """
+        Check if student can submit a course registration
+        Returns (can_submit, message)
+        """
+        with self.optimized_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if student info exists and is approved
+            cursor.execute(
+                "SELECT approval_status FROM student_info WHERE student_id = ?",
+                (student_id,)
+            )
+            student_info = cursor.fetchone()
+            
+            if not student_info:
+                return False, "Student information not found"
+            if student_info[0] != 'approved':
+                return False, "Student information not yet approved"
+                
+            # Check existing course registrations
+            cursor.execute(
+                """
+                SELECT approval_status 
+                FROM course_registration 
+                WHERE student_id = ? 
+                ORDER BY date_registered DESC 
+                LIMIT 1
+                """,
+                (student_id,)
+            )
+            registration = cursor.fetchone()
+            
+            if registration:
+                if registration[0] == 'pending':
+                    return False, "Previous course registration pending approval"
+                if registration[0] == 'approved':
+                    return False, "Course registration already approved"
+                    
+            return True, "Course registration allowed"
+
+    def get_registration_status(self, student_id: str) -> Dict:
+        """
+        Get comprehensive registration status for a student
+        """
+        with self.optimized_connection() as conn:
+            cursor = conn.cursor()
+            
+            status = {
+                'has_student_info': False,
+                'student_info_status': None,
+                'has_course_registration': False,
+                'course_registration_status': None,
+                'last_update': None
+            }
+            
+            # Check student info
+            cursor.execute(
+                """
+                SELECT approval_status, created_at 
+                FROM student_info 
+                WHERE student_id = ?
+                """,
+                (student_id,)
+            )
+            student_info = cursor.fetchone()
+            
+            if student_info:
+                status['has_student_info'] = True
+                status['student_info_status'] = student_info[0]
+                status['last_update'] = student_info[1]
+            
+            # Check course registration
+            cursor.execute(
+                """
+                SELECT approval_status, date_registered 
+                FROM course_registration 
+                WHERE student_id = ? 
+                ORDER BY date_registered DESC 
+                LIMIT 1
+                """,
+                (student_id,)
+            )
+            registration = cursor.fetchone()
+            
+            if registration:
+                status['has_course_registration'] = True
+                status['course_registration_status'] = registration[0]
+                status['last_update'] = max(status['last_update'], registration[1]) if status['last_update'] else registration[1]
+                
+            return status
+        
+        
+    def check_existing_student_info(self, student_id: str) -> bool:
+        """
+        Returns True if student info already exists.
+        """
+        with self.optimized_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM student_info WHERE student_id = ?", (student_id,))
+            return cursor.fetchone() is not None
+    
+    def check_existing_course_registration(self, student_id: str) -> bool:
+        """
+        Returns True if a course registration already exists for a student.
+        """
+        with self.optimized_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM course_registration WHERE student_id = ?", (student_id,))
+            return cursor.fetchone() is not None
+
+    def cleanup_old_files(self, days_old: int = 30):
+            """
+            Remove files in the uploads directory that are older than 'days_old'
+            and are not referenced in the database.
+            """
+            with self.optimized_connection() as conn:
+                cursor = conn.cursor()
+                # Both SELECT statements are now modified to return three columns.
+                cursor.execute(
+                    """
+                    SELECT ghana_card_path, passport_photo_path, certificate_path
+                    FROM student_info
+                    UNION
+                    SELECT receipt_path, NULL, NULL
+                    FROM course_registration
+                    """
+                )
+                db_files = set()
+                for row in cursor.fetchall():
+                    # Update the set with each value in the tuple if it exists.
+                    db_files.update(path for path in row if path)
+
+            uploads_dir = "uploads"
+            if os.path.exists(uploads_dir):
+                current_time = datetime.now().timestamp()
+                for filename in os.listdir(uploads_dir):
+                    file_path = os.path.join(uploads_dir, filename)
+                    if os.path.isfile(file_path):
+                        file_age = current_time - os.path.getmtime(file_path)
+                        # Remove file if it is older than days_old and not referenced in db_files.
+                        if file_age > (days_old * 86400) and file_path not in db_files:
+                            try:
+                                os.remove(file_path)
+                                print(f"Removed old file: {file_path}")
+                            except Exception as e:
+                                print(f"Error removing file {file_path}: {str(e)}")
+                                
+                                
+
+
+def main():
+    initialize_app()
+    
+    # Call cleanup for old files at app startup
+    rc_manager = RegistrationConstraintsManager()
+    rc_manager.cleanup_old_files(days_old=30)
+
 
     if not st.session_state.admin_logged_in:
         with st.sidebar:
             st.subheader("Admin Login")
             username = st.text_input("Username", key="login_username")
             password = st.text_input("Password", type="password", key="login_password")
-
             if st.button("Login"):
                 conn = sqlite3.connect("student_registration.db")
                 c = conn.cursor()
-                c.execute(
-                    "SELECT * FROM admin WHERE username=? AND password=?",
-                    (username, password),
-                )
+                c.execute("SELECT * FROM admin WHERE username=? AND password=?", (username, password))
                 admin = c.fetchone()
                 conn.close()
-
                 if admin:
                     st.session_state.admin_logged_in = True
                     st.rerun()
@@ -4846,10 +5453,23 @@ def main():
                 student_login_form()
             else:
                 student_portal()
+                # Only show footer when student is logged in
+                student = get_student_info(st.session_state.student_logged_in)
+                if student:
+                    st.markdown(
+                        f"""
+                        <div style="text-align: center; margin-top: 2rem; padding: 1rem; color: #666;">
+                            <p>UPSA Student Portal • Last login: {student.get('last_login', 'Never')}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
         elif page == "Student Information":
             student_info_form()
         else:
             course_registration_form()
+            
+
 
 
 if __name__ == "__main__":
