@@ -1,10 +1,8 @@
-Pandas
-Streamlit
-pandas
-Pillow
-reportlab
-plotly
-openpyxl
-fitz
-PyMuPDF
+pandas==2.2.3
+streamlit==1.42.1
+pillow==11.1.0
+reportlab==4.3.1
+plotly==6.0.0
+openpyxl==3.1.5
+pymupdf==1.25.3
 psutil
