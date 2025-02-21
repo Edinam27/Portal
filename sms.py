@@ -5073,15 +5073,6 @@ def get_student_registrations(student_id):
 
 
 
-
-def generate_course_registration_pdf(registration):
-    # Dummy PDF generation function; replace with actual PDF library usage (e.g., ReportLab)
-    pdf_filename = f"registration_{registration.get('registration_id')}.pdf"
-    with open(pdf_filename, "w") as f:
-        f.write("PDF Content for Registration")
-    return pdf_filename
-
-
 def display_modern_profile(student):
     st.subheader("👤 Profile Information")
     col1, col2 = st.columns([1, 2])
