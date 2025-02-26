@@ -1,15 +1,24 @@
 import streamlit as st
-import sqlite3
+import sqlite3, io, os
 from datetime import datetime, timedelta
 import pandas as pd
 import os
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table as RLTable, TableStyle, Image
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table as RLTable,
+    TableStyle,
+    Image,
+)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, cm
+from reportlab.lib.units import inch, cm, mm
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib import colors
 from PIL import Image as PILImage
+from reportlab.platypus import Image as RLImage
 import io
 import zipfile
 from pathlib import Path
@@ -36,7 +45,7 @@ st.set_page_config(
     page_title="Student Registration System",
     page_icon="🎓",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 
@@ -72,8 +81,6 @@ def get_db_connection(max_retries=5, retry_delay=1):
                 time.sleep(retry_delay)
             else:
                 raise
-
-
 
 
 def init_db():
@@ -648,12 +655,12 @@ def generate_student_info_pdf(data):
     # Header with Logo
     header_data = [
         [
-            Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
+            RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
             Paragraph(
                 "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>IPS DIRECTORATE",
                 styles["CustomTitle"],
             ),
-            Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
+            RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     ]
     # Use RLTable instead of Table
@@ -881,11 +888,11 @@ def generate_course_registration_pdf(data):
                 header_elements.append(Image(img_buffer))
         except Exception as e:
             header_elements.append(
-                Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
+                RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
             )
     else:
         header_elements.append(
-            Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
+            RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
         )
 
     header_elements.extend(
@@ -894,7 +901,7 @@ def generate_course_registration_pdf(data):
                 "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>Proof of Registration",
                 styles["CustomTitle"],
             ),
-            Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
+            RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     )
     header_table = RLTable([header_elements], [2 * inch, 4 * inch, 2 * inch])
@@ -1165,7 +1172,9 @@ def student_info_form():
         form_data["student_id"] = student_id_input.strip()
         # Check if student info already exists.
         if rc_manager.check_existing_student_info(form_data["student_id"]):
-            st.warning("You have already submitted your student information. Please proceed to course registration or contact administration for changes.")
+            st.warning(
+                "You have already submitted your student information. Please proceed to course registration or contact administration for changes."
+            )
             st.stop()
     else:
         st.info("Please enter your Student ID to begin.")
@@ -1182,7 +1191,9 @@ def student_info_form():
         form_data["nationality"] = st.text_input("Nationality")
     with col2:
         form_data["gender"] = st.selectbox("Gender", ["Male", "Female", "Other"])
-        form_data["marital_status"] = st.selectbox("Marital Status", ["Single", "Married", "Divorced", "Widowed"])
+        form_data["marital_status"] = st.selectbox(
+            "Marital Status", ["Single", "Married", "Divorced", "Widowed"]
+        )
         form_data["religion"] = st.text_input("Religion")
         form_data["denomination"] = st.text_input("Denomination")
         disability_status = st.selectbox("Disability Status", ["None", "Yes"])
@@ -1225,7 +1236,9 @@ def student_info_form():
     col9, col10 = st.columns(2)
     with col9:
         st.markdown('<div class="upload-section">', unsafe_allow_html=True)
-        ghana_card = st.file_uploader("Upload Ghana Card/Birth Certificate", type=["pdf", "jpg", "png"])
+        ghana_card = st.file_uploader(
+            "Upload Ghana Card/Birth Certificate", type=["pdf", "jpg", "png"]
+        )
         passport_photo = st.file_uploader("Upload Passport Photo", type=["jpg", "png"])
         # Removed Transcript upload
         certificate = st.file_uploader("Upload Certificate", type=["pdf"])
@@ -1269,7 +1282,9 @@ def student_info_form():
                     c = conn.cursor()
                     insert_student_info(c, st.session_state.form_data, file_paths)
                     conn.commit()
-                    st.success("Information submitted successfully! Pending admin approval.")
+                    st.success(
+                        "Information submitted successfully! Pending admin approval."
+                    )
                     st.session_state.review_mode = False
                 except sqlite3.IntegrityError:
                     st.error("Student ID already exists!")
@@ -1372,15 +1387,19 @@ def course_registration_form():
     if not form_data["student_id"]:
         st.warning("Please enter your Student ID")
         st.stop()
-        
+
     # Prevent duplicate registration
     if rc_manager.check_existing_course_registration(form_data["student_id"]):
-        st.warning("You have already submitted your course registration. Duplicate submissions are not allowed.")
+        st.warning(
+            "You have already submitted your course registration. Duplicate submissions are not allowed."
+        )
         st.stop()
 
     conn = sqlite3.connect("student_registration.db")
     c = conn.cursor()
-    c.execute("SELECT * FROM student_info WHERE student_id = ?", (form_data["student_id"],))
+    c.execute(
+        "SELECT * FROM student_info WHERE student_id = ?", (form_data["student_id"],)
+    )
     student_info = c.fetchone()
     if student_info:
         st.markdown("---")
@@ -1401,16 +1420,26 @@ def course_registration_form():
             st.write(f"**Phone:** {student_info[9]}")
         col3, col4 = st.columns(2)
         with col3:
-            form_data["programme"] = st.selectbox("Programme", ["CIMG", "CIM-UK", "ICAG", "ACCA"])
+            form_data["programme"] = st.selectbox(
+                "Programme", ["CIMG", "CIM-UK", "ICAG", "ACCA"]
+            )
             program_levels = list(get_program_courses(form_data["programme"]).keys())
             form_data["level"] = st.selectbox("Level/Part", program_levels)
             form_data["specialization"] = st.text_input("Specialization (Optional)")
         with col4:
-            form_data["session"] = st.selectbox("Session", ["Morning", "Evening", "Weekend"])
-            form_data["academic_year"] = st.selectbox("Academic Year", [f"{year}-{year+1}" for year in range(2025, 2035)])
-            form_data["semester"] = st.selectbox("Semester", ["First", "Second", "Third"])
+            form_data["session"] = st.selectbox(
+                "Session", ["Morning", "Evening", "Weekend"]
+            )
+            form_data["academic_year"] = st.selectbox(
+                "Academic Year", [f"{year}-{year+1}" for year in range(2025, 2035)]
+            )
+            form_data["semester"] = st.selectbox(
+                "Semester", ["First", "Second", "Third"]
+            )
         st.subheader("Course Selection")
-        available_courses = get_program_courses(form_data["programme"]).get(form_data["level"], [])
+        available_courses = get_program_courses(form_data["programme"]).get(
+            form_data["level"], []
+        )
         selected_courses = st.multiselect(
             "Select Courses",
             available_courses,
@@ -1419,18 +1448,34 @@ def course_registration_form():
         total_credits = sum([int(course.split("|")[2]) for course in selected_courses])
         form_data["courses"] = "\n".join(selected_courses)
         form_data["total_credits"] = total_credits
-        st.text_area("Selected Courses", form_data["courses"], height=150, disabled=True)
-        st.number_input("Total Credit Hours", value=total_credits, min_value=0, max_value=24, disabled=True)
+        st.text_area(
+            "Selected Courses", form_data["courses"], height=150, disabled=True
+        )
+        st.number_input(
+            "Total Credit Hours",
+            value=total_credits,
+            min_value=0,
+            max_value=24,
+            disabled=True,
+        )
         if total_credits > 24:
             st.error("Total credits cannot exceed 24 hours!")
             return
         st.subheader("📎 Payment Information (Optional)")
         col5, col6 = st.columns(2)
         with col5:
-            receipt = st.file_uploader("Upload Payment Receipt (Optional)", type=["pdf", "jpg", "png"])
-            form_data["receipt_path"] = save_uploaded_file(receipt, "uploads") if receipt else None
+            receipt = st.file_uploader(
+                "Upload Payment Receipt (Optional)", type=["pdf", "jpg", "png"]
+            )
+            form_data["receipt_path"] = (
+                save_uploaded_file(receipt, "uploads") if receipt else None
+            )
         with col6:
-            form_data["receipt_amount"] = st.number_input("Receipt Amount (GHS)", min_value=0.0, format="%.2f") if receipt else 0.0
+            form_data["receipt_amount"] = (
+                st.number_input("Receipt Amount (GHS)", min_value=0.0, format="%.2f")
+                if receipt
+                else 0.0
+            )
         if st.button("Review Registration"):
             review_course_registration(form_data)
         if st.button("Confirm and Submit"):
@@ -1487,7 +1532,8 @@ def admin_dashboard():
             "Generate Reports",
             "Send Emails",
             "Notifications",
-            "System Monitor"
+            "ID Card Generator",
+            "System Monitor",
         ],  # Added Notifications
     )
 
@@ -1509,6 +1555,8 @@ def admin_dashboard():
         send_emails()
     elif menu == "Notifications":
         admin_notification_interface()
+    elif menu == "ID Card Generator":
+        id_card_generator_ui()
     elif menu == "System Monitor":
         st.subheader("System Resource Monitor")
         metrics = system_resource_monitor()
@@ -1516,10 +1564,22 @@ def admin_dashboard():
         st.write(f"Memory Usage: {metrics['memory_percent']}%")
         st.write(f"Disk Usage: {metrics['disk_percent']}%")
         if should_backup():
-            st.warning("Backup recommended: Either it has been over 30 days since the last backup or disk usage is ≥ 90%.")
+            st.warning(
+                "Backup recommended: Either it has been over 30 days since the last backup or disk usage is ≥ 90%."
+            )
         if st.button("Perform Backup Now"):
             backup_file = perform_backup()
             st.success(f"Backup performed successfully! Backup file: {backup_file}")
+            try:
+                with open(backup_file, "rb") as f:
+                    st.download_button(
+                        label="Download Backup",
+                        data=f,
+                        file_name=backup_file.split(os.sep)[-1],
+                        mime="application/zip",
+                    )
+            except Exception as e:
+                st.error(f"Error providing download: {str(e)}")
 
 
 def zip_uploads_folder():
@@ -1709,22 +1769,10 @@ def manage_database():
 
 def upload_data_from_excel_and_docs():
     """
-    Bulk upload function updated to accept two Excel files:
-      - One for student information (now preserving document path values if provided)
-      - One for course registration data (authoritative for programme and other registration data)
-    Optionally uploads a zip file for related documents.
-    The zip file is saved to the uploads folder as-is.
+    Bulk upload function updated to accept two Excel files and to insert any absent columns
+    into the DataFrames before processing the data. This handles entries from older app versions.
     """
-    import pandas as pd
-    import sqlite3
-    import os
-    import shutil
-    import streamlit as st
-    from datetime import datetime
-
     st.header("Bulk Upload Data from Excel & Documents")
-
-    # Use two file uploaders: one for student info and one for course registration data.
     st.markdown("### Excel Files Upload")
     col1, col2 = st.columns(2)
     with col1:
@@ -1739,7 +1787,6 @@ def upload_data_from_excel_and_docs():
             type=["xlsx", "xls"],
             key="reg_excel",
         )
-
     docs_zip = st.file_uploader("Upload Zip File of Documents (Optional)", type=["zip"])
 
     if st.button("Process Bulk Upload"):
@@ -1754,16 +1801,87 @@ def upload_data_from_excel_and_docs():
             student_df = pd.read_excel(student_excel)
             reg_df = pd.read_excel(reg_excel)
 
+            # Define expected columns for student data.
+            expected_student_columns = [
+                "student_id",
+                "surname",
+                "other_names",
+                "date_of_birth",
+                "place_of_birth",
+                "home_town",
+                "residential_address",
+                "postal_address",
+                "email",
+                "telephone",
+                "ghana_card_id",
+                "nationality",
+                "marital_status",
+                "gender",
+                "religion",
+                "denomination",
+                "disability_status",
+                "disability_description",
+                "guardian_name",
+                "guardian_relationship",
+                "guardian_occupation",
+                "guardian_address",
+                "guardian_telephone",
+                "previous_school",
+                "qualification_type",
+                "completion_year",
+                "aggregate_score",
+                "ghana_card_path",
+                "passport_photo_path",
+                "transcript_path",
+                "certificate_path",
+                "receipt_path",
+                "programme",
+            ]
+            # Insert missing columns with default values.
+            for col in expected_student_columns:
+                if col not in student_df.columns:
+                    # For file path columns use None instead of empty string.
+                    if col in [
+                        "ghana_card_path",
+                        "passport_photo_path",
+                        "transcript_path",
+                        "certificate_path",
+                        "receipt_path",
+                        "programme",
+                    ]:
+                        student_df[col] = None
+                    else:
+                        student_df[col] = ""
+
+            # Define expected columns for course registration data.
+            expected_reg_columns = [
+                "student_id",
+                "index_number",
+                "programme",
+                "specialization",
+                "level",
+                "session",
+                "academic_year",
+                "semester",
+                "courses",
+                "total_credits",
+                "date_registered",
+                "approval_status",
+                "receipt_path",
+                "receipt_amount",
+            ]
+            for col in expected_reg_columns:
+                if col not in reg_df.columns:
+                    if col in ["receipt_path"]:
+                        reg_df[col] = None
+                    elif col == "receipt_amount":
+                        reg_df[col] = 0.0
+                    else:
+                        reg_df[col] = ""
+
+            # Insert student data into the database.
             conn = sqlite3.connect("student_registration.db")
             c = conn.cursor()
-
-            # Updated: Insert student data including document path fields.
-            # Expected Excel columns: student_id, surname, other_names, date_of_birth, place_of_birth,
-            # home_town, residential_address, postal_address, email, telephone, ghana_card_id, nationality,
-            # marital_status, gender, religion, denomination, disability_status, disability_description,
-            # guardian_name, guardian_relationship, guardian_occupation, guardian_address, guardian_telephone,
-            # previous_school, qualification_type, completion_year, aggregate_score,
-            # ghana_card_path, passport_photo_path, transcript_path, certificate_path, receipt_path.
             insert_student_query = """
                 INSERT OR IGNORE INTO student_info (
                     student_id, surname, other_names, date_of_birth, place_of_birth,
@@ -1773,9 +1891,13 @@ def upload_data_from_excel_and_docs():
                     guardian_name, guardian_relationship, guardian_occupation,
                     guardian_address, guardian_telephone, previous_school,
                     qualification_type, completion_year, aggregate_score,
-                    ghana_card_path, passport_photo_path, transcript_path, certificate_path, receipt_path,
-                    programme
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ghana_card_path, passport_photo_path, transcript_path,
+                    certificate_path, receipt_path, receipt_amount,
+                    approval_status, created_at, programme
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
             """
             for _, row in student_df.iterrows():
                 params = (
@@ -1811,11 +1933,13 @@ def upload_data_from_excel_and_docs():
                     row.get("transcript_path"),
                     row.get("certificate_path"),
                     row.get("receipt_path"),
-                    "",  # Programme will be updated from course registration data
+                    0.0,  # receipt_amount default value
+                    "pending",
+                    datetime.now(),
+                    row.get("programme", ""),
                 )
                 c.execute(insert_student_query, params)
 
-            # Insert course registration data.
             insert_reg_query = """
                 INSERT INTO course_registration (
                     student_id, index_number, programme, specialization, level,
@@ -1827,7 +1951,7 @@ def upload_data_from_excel_and_docs():
                 params = (
                     row.get("student_id"),
                     row.get("index_number"),
-                    row.get("programme"),  # authoritative programme data
+                    row.get("programme"),
                     row.get("specialization"),
                     row.get("level"),
                     row.get("session"),
@@ -1841,7 +1965,7 @@ def upload_data_from_excel_and_docs():
                     row.get("receipt_amount", 0.0),
                 )
                 c.execute(insert_reg_query, params)
-                # Update the student's programme field based on the registration Excel.
+                # Update the student's programme field based on the registration data.
                 update_query = (
                     "UPDATE student_info SET programme = ? WHERE student_id = ?"
                 )
@@ -1849,14 +1973,11 @@ def upload_data_from_excel_and_docs():
 
             conn.commit()
             conn.close()
-
             st.success("Excel data uploaded successfully!")
         except Exception as e:
             st.error(f"Error processing Excel files: {e}")
 
-        # Process the documents zip file if provided.
         if docs_zip:
-            # Save the zip file as-is in the uploads folder.
             saved_zip_path = save_uploaded_file(docs_zip, "uploads")
             st.success("Documents zip uploaded successfully!")
 
@@ -1973,68 +2094,597 @@ def generate_reports():
                 st.info("No course registration approval status data available")
 
     elif report_type == "Payment Statistics":
-        # Receipt statistics
-        receipt_stats = pd.read_sql_query(
-            """
+        # Import and use the enhanced payment statistics module
+        payment_statistics_section()
+
+        # Close the database connection
+        conn.close()
+
+
+import os
+import io
+import sqlite3
+import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
+import qrcode
+from datetime import datetime, timedelta
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+
+
+class IDCardGenerator:
+    """
+    Generates student ID cards with customizable templates
+    """
+
+    def __init__(self, db_path="student_registration.db"):
+        self.db_path = db_path
+        self.card_width = 1050  # pixels
+        self.card_height = 650  # pixels
+        self.card_color = (255, 255, 255)  # white background
+        self.text_color = (0, 0, 0)  # black text
+        self.accent_color = (0, 51, 102)  # UPSA blue
+
+        # Ensure fonts directory exists
+        os.makedirs("fonts", exist_ok=True)
+
+        # Default font paths - will use system defaults if these don't exist
+        self.title_font_path = "fonts/Arial_Bold.ttf"
+        self.regular_font_path = "fonts/Arial.ttf"
+
+        # Try to load fonts, use default if not available
+        try:
+            self.title_font = ImageFont.truetype(self.title_font_path, 36)
+            self.subtitle_font = ImageFont.truetype(self.title_font_path, 24)
+            self.regular_font = ImageFont.truetype(self.regular_font_path, 20)
+            self.small_font = ImageFont.truetype(self.regular_font_path, 16)
+        except IOError:
+            # Use default font if custom font not available
+            self.title_font = ImageFont.load_default()
+            self.subtitle_font = ImageFont.load_default()
+            self.regular_font = ImageFont.load_default()
+            self.small_font = ImageFont.load_default()
+
+    def get_student_data(self, student_id=None, programme=None):
+        """
+        Retrieve student data from the database based on filters
+
+        Args:
+            student_id: Optional specific student ID
+            programme: Optional programme filter
+
+        Returns:
+            DataFrame with student information
+        """
+        conn = sqlite3.connect(self.db_path)
+
+        query = """
             SELECT 
-                CASE 
-                    WHEN receipt_path IS NOT NULL THEN 'With Receipt'
-                    ELSE 'Without Receipt'
-                END as receipt_status,
-                COUNT(*) as count,
-                COALESCE(AVG(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END), 0) as avg_amount
-            FROM student_info
-            GROUP BY CASE 
-                        WHEN receipt_path IS NOT NULL THEN 'With Receipt'
-                        ELSE 'Without Receipt'
-                    END
+                si.student_id, 
+                si.surname, 
+                si.other_names, 
+                si.programme,
+                si.passport_photo_path,
+                si.email,
+                si.telephone,
+                cr.index_number,
+                MAX(cr.date_registered) as registration_date
+            FROM 
+                student_info si
+            LEFT JOIN 
+                course_registration cr ON si.student_id = cr.student_id
+            WHERE 
+                si.approval_status = 'approved'
+        """
+
+        params = []
+
+        if student_id:
+            query += " AND si.student_id = ?"
+            params.append(student_id)
+
+        if programme:
+            query += " AND si.programme = ?"
+            params.append(programme)
+
+        query += " GROUP BY si.student_id"
+
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+
+        return df
+
+    def generate_qr_code(self, data, size=200):
+        """Generate QR code with student data"""
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+        img = img.resize((size, size))
+
+        # Convert to bytes
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        return img_bytes
+
+    def create_id_card(self, student_data):
+        """
+        Create an ID card for a student
+
+        Args:
+            student_data: Dictionary with student information
+
+        Returns:
+            BytesIO object containing the ID card image
+        """
+        # Create blank card
+        card = Image.new("RGB", (self.card_width, self.card_height), self.card_color)
+        draw = ImageDraw.Draw(card)
+
+        # Add header with university name and logo
+        draw.rectangle([(0, 0), (self.card_width, 100)], fill=self.accent_color)
+        draw.text(
+            (self.card_width // 2, 50),
+            "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA",
+            font=self.title_font,
+            fill=(255, 255, 255),
+            anchor="mm",
+        )
+
+        # Add student photo
+        photo_size = 300
+        photo_pos = (50, 150)
+
+        if student_data["passport_photo_path"] and os.path.exists(
+            student_data["passport_photo_path"]
+        ):
+            try:
+                photo = Image.open(student_data["passport_photo_path"])
+                photo = photo.resize((photo_size, photo_size))
+                card.paste(photo, photo_pos)
+
+                # Add border around photo
+                draw.rectangle(
+                    [photo_pos, (photo_pos[0] + photo_size, photo_pos[1] + photo_size)],
+                    outline=self.accent_color,
+                    width=5,
+                )
+            except Exception as e:
+                # If error loading photo, draw placeholder
+                draw.rectangle(
+                    [photo_pos, (photo_pos[0] + photo_size, photo_pos[1] + photo_size)],
+                    outline=self.accent_color,
+                    width=5,
+                    fill=(240, 240, 240),
+                )
+                draw.text(
+                    (photo_pos[0] + photo_size // 2, photo_pos[1] + photo_size // 2),
+                    "NO PHOTO",
+                    font=self.subtitle_font,
+                    fill=self.text_color,
+                    anchor="mm",
+                )
+        else:
+            # Draw placeholder if no photo
+            draw.rectangle(
+                [photo_pos, (photo_pos[0] + photo_size, photo_pos[1] + photo_size)],
+                outline=self.accent_color,
+                width=5,
+                fill=(240, 240, 240),
+            )
+            draw.text(
+                (photo_pos[0] + photo_size // 2, photo_pos[1] + photo_size // 2),
+                "NO PHOTO",
+                font=self.subtitle_font,
+                fill=self.text_color,
+                anchor="mm",
+            )
+
+        # Add student information
+        info_start_x = photo_pos[0] + photo_size + 50
+        info_start_y = 150
+        line_height = 40
+
+        # Student ID and name (larger font)
+        draw.text(
+            (info_start_x, info_start_y),
+            f"Student ID: {student_data['student_id']}",
+            font=self.subtitle_font,
+            fill=self.text_color,
+        )
+
+        draw.text(
+            (info_start_x, info_start_y + line_height),
+            f"Name: {student_data['surname']}, {student_data['other_names']}",
+            font=self.subtitle_font,
+            fill=self.text_color,
+        )
+
+        # Other details
+        draw.text(
+            (info_start_x, info_start_y + line_height * 2),
+            f"Programme: {student_data['programme']}",
+            font=self.regular_font,
+            fill=self.text_color,
+        )
+
+        if pd.notna(student_data["index_number"]) and student_data["index_number"]:
+            draw.text(
+                (info_start_x, info_start_y + line_height * 3),
+                f"Index Number: {student_data['index_number']}",
+                font=self.regular_font,
+                fill=self.text_color,
+            )
+
+        draw.text(
+            (info_start_x, info_start_y + line_height * 4),
+            f"Email: {student_data['email']}",
+            font=self.regular_font,
+            fill=self.text_color,
+        )
+
+        draw.text(
+            (info_start_x, info_start_y + line_height * 5),
+            f"Phone: {student_data['telephone']}",
+            font=self.regular_font,
+            fill=self.text_color,
+        )
+
+        # Generate and add QR code
+        qr_data = f"ID:{student_data['student_id']}\nName:{student_data['surname']}, {student_data['other_names']}\nProgramme:{student_data['programme']}"
+        qr_img_bytes = self.generate_qr_code(qr_data)
+        qr_img = Image.open(qr_img_bytes)
+
+        qr_pos = (self.card_width - 250, self.card_height - 250)
+        card.paste(qr_img, qr_pos)
+
+        # Add issue and expiry dates
+        today = datetime.now()
+        expiry = today + timedelta(days=365)  # 1 year validity
+
+        draw.text(
+            (50, self.card_height - 80),
+            f"Issue Date: {today.strftime('%d-%m-%Y')}",
+            font=self.small_font,
+            fill=self.text_color,
+        )
+
+        draw.text(
+            (50, self.card_height - 50),
+            f"Expiry Date: {expiry.strftime('%d-%m-%Y')}",
+            font=self.small_font,
+            fill=self.text_color,
+        )
+
+        # Add signature line
+        sig_start_x = 50
+        sig_start_y = self.card_height - 150
+        draw.line(
+            [(sig_start_x, sig_start_y), (sig_start_x + 200, sig_start_y)],
+            fill=self.text_color,
+            width=2,
+        )
+        draw.text(
+            (sig_start_x + 100, sig_start_y + 20),
+            "Student Signature",
+            font=self.small_font,
+            fill=self.text_color,
+            anchor="mm",
+        )
+
+        # Add footer
+        draw.rectangle(
+            [(0, self.card_height - 30), (self.card_width, self.card_height)],
+            fill=self.accent_color,
+        )
+        draw.text(
+            (self.card_width // 2, self.card_height - 15),
+            "This card remains the property of UPSA and must be returned upon request",
+            font=self.small_font,
+            fill=(255, 255, 255),
+            anchor="mm",
+        )
+
+        # Convert to bytes
+        img_bytes = io.BytesIO()
+        card.save(img_bytes, format="PNG")
+        img_bytes.seek(0)
+
+        return img_bytes
+
+    def create_pdf_from_cards(self, card_bytes_list, filename="id_cards.pdf"):
+        """
+        Create a PDF with multiple ID cards (4 per page)
+
+        Args:
+            card_bytes_list: List of BytesIO objects containing card images
+            filename: Output PDF filename
+
+        Returns:
+            Path to the generated PDF file
+        """
+        # A4 size in points
+        page_width, page_height = A4
+
+        # Create PDF
+        c = canvas.Canvas(filename, pagesize=A4)
+
+        cards_per_page = 4
+        cards_per_row = 2
+
+        # Calculate card size on PDF (in mm)
+        card_width_mm = 85  # Standard ID card width
+        card_height_mm = card_width_mm * (
+            self.card_height / self.card_width
+        )  # Maintain aspect ratio
+
+        # Calculate margins and spacing
+        margin_mm = 10
+        spacing_mm = 5
+
+        # Calculate positions
+        positions = []
+        for i in range(cards_per_page):
+            row = i // cards_per_row
+            col = i % cards_per_row
+
+            x = margin_mm + col * (card_width_mm + spacing_mm)
+            y = (
+                page_height / mm
+                - margin_mm
+                - card_height_mm
+                - row * (card_height_mm + spacing_mm)
+            )
+
+            positions.append((x, y))
+
+        # Add cards to PDF
+        for i, card_bytes in enumerate(card_bytes_list):
+            if i > 0 and i % cards_per_page == 0:
+                c.showPage()  # New page
+
+            pos_index = i % cards_per_page
+            x, y = positions[pos_index]
+
+            # Reset file pointer
+            card_bytes.seek(0)
+
+            # Create a PIL Image from BytesIO
+            img = Image.open(card_bytes)
+
+            # Convert PIL Image to a format ReportLab can use
+            img_reader = ImageReader(img)
+
+            # Add image to PDF - convert mm to points
+            c.drawImage(
+                img_reader,
+                x * mm,
+                (y - card_height_mm) * mm,
+                width=card_width_mm * mm,
+                height=card_height_mm * mm,
+            )
+
+        # Save the PDF
+        c.save()
+        return filename
+
+    def generate_id_cards(self, student_id=None, programme=None):
+        """
+        Generate ID cards based on filters
+
+        Args:
+            student_id: Optional specific student ID
+            programme: Optional programme filter
+
+        Returns:
+            Path to the generated PDF or ZIP file
+        """
+        # Get student data
+        students_df = self.get_student_data(student_id, programme)
+
+        if students_df.empty:
+            return None, "No students found matching the criteria"
+
+        # Generate cards
+        card_bytes_list = []
+        for _, student in students_df.iterrows():
+            card_bytes = self.create_id_card(student)
+            card_bytes_list.append(card_bytes)
+
+        # If only one student, return single PDF
+        if len(card_bytes_list) == 1:
+            student_id = students_df.iloc[0]["student_id"]
+            filename = f"id_card_{student_id}.pdf"
+            pdf_path = self.create_pdf_from_cards([card_bytes_list[0]], filename)
+            return pdf_path, f"ID card generated for student {student_id}"
+
+        # For multiple students, create PDF with 4 cards per page
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if programme:
+            filename = f"id_cards_{programme}_{timestamp}.pdf"
+        else:
+            filename = f"id_cards_all_{timestamp}.pdf"
+
+        pdf_path = self.create_pdf_from_cards(card_bytes_list, filename)
+        return pdf_path, f"Generated {len(card_bytes_list)} ID cards"
+
+
+def id_card_generator_ui():
+    """
+    Streamlit UI for the ID card generator
+    """
+    st.subheader("Student ID Card Generator")
+
+    # Initialize generator
+    generator = IDCardGenerator()
+
+    # Get list of programmes for dropdown
+    conn = sqlite3.connect("student_registration.db")
+    programmes_df = pd.read_sql_query(
+        "SELECT DISTINCT programme FROM student_info WHERE programme IS NOT NULL AND programme != ''",
+        conn,
+    )
+    conn.close()
+
+    programmes = ["All"] + programmes_df["programme"].tolist()
+
+    # Create tabs for different generation options
+    tab1, tab2 = st.tabs(["Generate by Programme", "Generate for Individual Student"])
+
+    with tab1:
+        st.write("Generate ID cards for all students in a programme")
+        selected_programme = st.selectbox("Select Programme", programmes)
+
+        if selected_programme != "All":
+            # Get student count for the selected programme
+            conn = sqlite3.connect("student_registration.db")
+            count_df = pd.read_sql_query(
+                "SELECT COUNT(*) as count FROM student_info WHERE programme = ? AND approval_status = 'approved'",
+                conn,
+                params=(selected_programme,),
+            )
+            conn.close()
+
+            student_count = count_df["count"].iloc[0]
+            st.write(
+                f"This will generate ID cards for {student_count} approved students in {selected_programme}"
+            )
+        else:
+            # Get total student count
+            conn = sqlite3.connect("student_registration.db")
+            count_df = pd.read_sql_query(
+                "SELECT COUNT(*) as count FROM student_info WHERE approval_status = 'approved'",
+                conn,
+            )
+            conn.close()
+
+            student_count = count_df["count"].iloc[0]
+            st.write(
+                f"This will generate ID cards for all {student_count} approved students"
+            )
+
+        if st.button("Generate ID Cards", key="generate_programme"):
+            if student_count == 0:
+                st.warning("No approved students found for the selected criteria")
+            else:
+                with st.spinner("Generating ID cards..."):
+                    programme_param = (
+                        None if selected_programme == "All" else selected_programme
+                    )
+                    pdf_path, message = generator.generate_id_cards(
+                        programme=programme_param
+                    )
+
+                    if pdf_path:
+                        st.success(message)
+                        with open(pdf_path, "rb") as f:
+                            st.download_button(
+                                label="Download ID Cards PDF",
+                                data=f,
+                                file_name=os.path.basename(pdf_path),
+                                mime="application/pdf",
+                            )
+                        # Clean up the file after download
+                        try:
+                            os.remove(pdf_path)
+                        except:
+                            pass
+                    else:
+                        st.error(message)
+
+    with tab2:
+        st.write("Generate ID card for a specific student")
+
+        # Get list of students for dropdown
+        conn = sqlite3.connect("student_registration.db")
+        students_df = pd.read_sql_query(
+            """
+            SELECT student_id, surname, other_names 
+            FROM student_info 
+            WHERE approval_status = 'approved'
+            ORDER BY surname, other_names
             """,
             conn,
         )
+        conn.close()
 
-        st.write("**Receipt Statistics**")
-        if not receipt_stats.empty:
-            col1, col2 = st.columns(2)
-            with col1:
-                fig = px.pie(
-                    receipt_stats,
-                    names="receipt_status",
-                    values="count",
-                    title="Receipt Upload Distribution",
-                )
-                st.plotly_chart(fig)
-
-            with col2:
-                with_receipt_data = receipt_stats[
-                    receipt_stats["receipt_status"] == "With Receipt"
-                ]
-                if not with_receipt_data.empty:
-                    avg_amount = with_receipt_data["avg_amount"].iloc[0]
-                    st.write(f"Average Receipt Amount: GHS {avg_amount:.2f}")
-                else:
-                    st.write("No receipt data available")
-
-                # Additional payment statistics
-                total_payments = pd.read_sql_query(
-                    """
-                    SELECT 
-                        COUNT(*) as total_receipts,
-                        COALESCE(SUM(receipt_amount), 0) as total_amount
-                    FROM student_info 
-                    WHERE receipt_path IS NOT NULL
-                    """,
-                    conn,
-                )
-                st.write("**Payment Summary**")
-                st.write(f"Total Receipts: {total_payments['total_receipts'].iloc[0]}")
-                st.write(
-                    f"Total Amount: GHS {total_payments['total_amount'].iloc[0]:.2f}"
-                )
+        if students_df.empty:
+            st.warning("No approved students found in the database")
         else:
-            st.info("No payment statistics available")
+            # Create a list of options with format: "ID - Surname, Other Names"
+            student_options = [
+                f"{row['student_id']} - {row['surname']}, {row['other_names']}"
+                for _, row in students_df.iterrows()
+            ]
 
-    # Close the database connection
-    conn.close()
+            selected_student = st.selectbox("Select Student", student_options)
+            student_id = selected_student.split(" - ")[0]
+
+            if st.button("Generate ID Card", key="generate_individual"):
+                with st.spinner("Generating ID card..."):
+                    pdf_path, message = generator.generate_id_cards(
+                        student_id=student_id
+                    )
+
+                    if pdf_path:
+                        st.success(message)
+                        with open(pdf_path, "rb") as f:
+                            st.download_button(
+                                label="Download ID Card PDF",
+                                data=f,
+                                file_name=os.path.basename(pdf_path),
+                                mime="application/pdf",
+                            )
+                        # Clean up the file after download
+                        try:
+                            os.remove(pdf_path)
+                        except:
+                            pass
+                    else:
+                        st.error(message)
+
+    # Additional options
+    st.markdown("---")
+    st.subheader("ID Card Settings")
+
+    with st.expander("Card Design Options"):
+        st.write("These settings will be applied to newly generated cards")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            card_color = st.color_picker("Card Background Color", "#FFFFFF")
+            text_color = st.color_picker("Text Color", "#000000")
+
+        with col2:
+            accent_color = st.color_picker("Accent Color", "#003366")
+            include_qr = st.checkbox("Include QR Code", value=True)
+
+        if st.button("Save Settings"):
+            # Save settings to a configuration file or database
+            settings = {
+                "card_color": card_color,
+                "text_color": text_color,
+                "accent_color": accent_color,
+                "include_qr": include_qr,
+            }
+
+            # In a real implementation, you would save these settings
+            # For example:
+            # with open("id_card_settings.json", "w") as f:
+            #     json.dump(settings, f)
+
+            st.success("Settings saved successfully!")
 
 
 def show_pending_approvals():
@@ -3324,11 +3974,407 @@ def manage_programs():
         st.info("No programs found in the database")
 
     conn.close()
-    
-    
+
+
+import streamlit as st
+import sqlite3
+import pandas as pd
+import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+
+
+def generate_payment_statistics():
+    """
+    Generate comprehensive payment statistics with visualizations.
+    This function queries the database for payment information from both
+    student_info and course_registration tables, then creates visualizations.
+    """
+    st.subheader("Payment Statistics Dashboard")
+
+    # Connect to the database
+    conn = sqlite3.connect("student_registration.db")
+
+    # Create tabs for different payment views
+    tab1, tab2, tab3 = st.tabs(
+        ["Overview", "Student Payments", "Course Registration Payments"]
+    )
+
+    with tab1:
+        st.write("### Payment Overview")
+
+        # Get overall payment statistics from both tables
+        student_payments = pd.read_sql_query(
+            """
+            SELECT 
+                COUNT(*) as total_records,
+                SUM(CASE WHEN receipt_path IS NOT NULL THEN 1 ELSE 0 END) as with_receipt,
+                SUM(CASE WHEN receipt_path IS NULL THEN 1 ELSE 0 END) as without_receipt,
+                SUM(COALESCE(receipt_amount, 0)) as total_amount
+            FROM student_info
+            """,
+            conn,
+        )
+
+        course_payments = pd.read_sql_query(
+            """
+            SELECT 
+                COUNT(*) as total_records,
+                SUM(CASE WHEN receipt_path IS NOT NULL THEN 1 ELSE 0 END) as with_receipt,
+                SUM(CASE WHEN receipt_path IS NULL THEN 1 ELSE 0 END) as without_receipt,
+                SUM(COALESCE(receipt_amount, 0)) as total_amount
+            FROM course_registration
+            """,
+            conn,
+        )
+
+        # Display summary metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Total Payments Collected",
+                f"GHS {student_payments['total_amount'].iloc[0] + course_payments['total_amount'].iloc[0]:,.2f}",
+            )
+        with col2:
+            st.metric(
+                "Student Info Receipts",
+                f"{student_payments['with_receipt'].iloc[0]} / {student_payments['total_records'].iloc[0]}",
+            )
+        with col3:
+            st.metric(
+                "Course Registration Receipts",
+                f"{course_payments['with_receipt'].iloc[0]} / {course_payments['total_records'].iloc[0]}",
+            )
+
+        # Create combined visualization
+        fig = make_subplots(
+            rows=1,
+            cols=2,
+            specs=[[{"type": "pie"}, {"type": "pie"}]],
+            subplot_titles=("Student Info Receipts", "Course Registration Receipts"),
+        )
+
+        # Student info receipt pie chart
+        fig.add_trace(
+            go.Pie(
+                labels=["With Receipt", "Without Receipt"],
+                values=[
+                    student_payments["with_receipt"].iloc[0],
+                    student_payments["without_receipt"].iloc[0],
+                ],
+                marker_colors=["#4CAF50", "#F44336"],
+                name="Student Info",
+            ),
+            row=1,
+            col=1,
+        )
+
+        # Course registration receipt pie chart
+        fig.add_trace(
+            go.Pie(
+                labels=["With Receipt", "Without Receipt"],
+                values=[
+                    course_payments["with_receipt"].iloc[0],
+                    course_payments["without_receipt"].iloc[0],
+                ],
+                marker_colors=["#4CAF50", "#F44336"],
+                name="Course Registration",
+            ),
+            row=1,
+            col=2,
+        )
+
+        fig.update_layout(height=400, title_text="Receipt Upload Distribution")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Payment trends over time
+        st.write("### Payment Trends")
+
+        # Get payment data by date
+        student_payment_trend = pd.read_sql_query(
+            """
+            SELECT 
+                date(created_at) as payment_date,
+                COUNT(*) as num_payments,
+                SUM(COALESCE(receipt_amount, 0)) as daily_amount
+            FROM student_info
+            WHERE receipt_path IS NOT NULL
+            GROUP BY date(created_at)
+            ORDER BY payment_date
+            """,
+            conn,
+        )
+
+        course_payment_trend = pd.read_sql_query(
+            """
+            SELECT 
+                date(date_registered) as payment_date,
+                COUNT(*) as num_payments,
+                SUM(COALESCE(receipt_amount, 0)) as daily_amount
+            FROM course_registration
+            WHERE receipt_path IS NOT NULL
+            GROUP BY date(date_registered)
+            ORDER BY payment_date
+            """,
+            conn,
+        )
+
+        # Combine the trends if data exists
+        if not student_payment_trend.empty or not course_payment_trend.empty:
+            # Add source column to each dataframe
+            if not student_payment_trend.empty:
+                student_payment_trend["source"] = "Student Info"
+            if not course_payment_trend.empty:
+                course_payment_trend["source"] = "Course Registration"
+
+            # Combine dataframes
+            combined_trend = pd.concat(
+                [student_payment_trend, course_payment_trend], ignore_index=True
+            )
+
+            if not combined_trend.empty:
+                # Create line chart
+                fig = px.line(
+                    combined_trend,
+                    x="payment_date",
+                    y="daily_amount",
+                    color="source",
+                    title="Payment Amounts Over Time",
+                    labels={
+                        "payment_date": "Date",
+                        "daily_amount": "Amount (GHS)",
+                        "source": "Source",
+                    },
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No payment trend data available")
+        else:
+            st.info("No payment trend data available")
+
+    with tab2:
+        st.write("### Student Information Payments")
+
+        # Get detailed student payment statistics
+        student_payment_details = pd.read_sql_query(
+            """
+            SELECT 
+                CASE 
+                    WHEN receipt_path IS NOT NULL THEN 'With Receipt'
+                    ELSE 'Without Receipt'
+                END as receipt_status,
+                COUNT(*) as count,
+                AVG(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as avg_amount,
+                MIN(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as min_amount,
+                MAX(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as max_amount,
+                SUM(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as total_amount
+            FROM student_info
+            GROUP BY CASE 
+                        WHEN receipt_path IS NOT NULL THEN 'With Receipt'
+                        ELSE 'Without Receipt'
+                    END
+            """,
+            conn,
+        )
+
+        if not student_payment_details.empty:
+            # Display pie chart
+            fig = px.pie(
+                student_payment_details,
+                names="receipt_status",
+                values="count",
+                title="Student Receipt Upload Distribution",
+                color="receipt_status",
+                color_discrete_map={
+                    "With Receipt": "#4CAF50",
+                    "Without Receipt": "#F44336",
+                },
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Display payment statistics
+            with_receipt_data = student_payment_details[
+                student_payment_details["receipt_status"] == "With Receipt"
+            ]
+            if not with_receipt_data.empty:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Average Amount",
+                        f"GHS {with_receipt_data['avg_amount'].iloc[0]:,.2f}",
+                    )
+                with col2:
+                    st.metric(
+                        "Minimum Amount",
+                        f"GHS {with_receipt_data['min_amount'].iloc[0]:,.2f}",
+                    )
+                with col3:
+                    st.metric(
+                        "Maximum Amount",
+                        f"GHS {with_receipt_data['max_amount'].iloc[0]:,.2f}",
+                    )
+
+                st.metric(
+                    "Total Amount Collected",
+                    f"GHS {with_receipt_data['total_amount'].iloc[0]:,.2f}",
+                )
+            else:
+                st.info("No student receipt data available")
+
+            # Get payment distribution by programme
+            programme_payments = pd.read_sql_query(
+                """
+                SELECT 
+                    programme,
+                    COUNT(*) as student_count,
+                    SUM(CASE WHEN receipt_path IS NOT NULL THEN 1 ELSE 0 END) as with_receipt,
+                    SUM(COALESCE(receipt_amount, 0)) as total_amount
+                FROM student_info
+                WHERE programme IS NOT NULL AND programme != ''
+                GROUP BY programme
+                ORDER BY total_amount DESC
+                """,
+                conn,
+            )
+
+            if not programme_payments.empty:
+                st.write("### Payments by Programme")
+                fig = px.bar(
+                    programme_payments,
+                    x="programme",
+                    y="total_amount",
+                    title="Total Payments by Programme",
+                    labels={
+                        "programme": "Programme",
+                        "total_amount": "Total Amount (GHS)",
+                    },
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+        else:
+            st.info("No student payment statistics available")
+
+    with tab3:
+        st.write("### Course Registration Payments")
+
+        # Get detailed course registration payment statistics
+        course_payment_details = pd.read_sql_query(
+            """
+            SELECT 
+                CASE 
+                    WHEN receipt_path IS NOT NULL THEN 'With Receipt'
+                    ELSE 'Without Receipt'
+                END as receipt_status,
+                COUNT(*) as count,
+                AVG(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as avg_amount,
+                MIN(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as min_amount,
+                MAX(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as max_amount,
+                SUM(CASE WHEN receipt_amount IS NOT NULL THEN receipt_amount ELSE 0 END) as total_amount
+            FROM course_registration
+            GROUP BY CASE 
+                        WHEN receipt_path IS NOT NULL THEN 'With Receipt'
+                        ELSE 'Without Receipt'
+                    END
+            """,
+            conn,
+        )
+
+        if not course_payment_details.empty:
+            # Display pie chart
+            fig = px.pie(
+                course_payment_details,
+                names="receipt_status",
+                values="count",
+                title="Course Registration Receipt Upload Distribution",
+                color="receipt_status",
+                color_discrete_map={
+                    "With Receipt": "#4CAF50",
+                    "Without Receipt": "#F44336",
+                },
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Display payment statistics
+            with_receipt_data = course_payment_details[
+                course_payment_details["receipt_status"] == "With Receipt"
+            ]
+            if not with_receipt_data.empty:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Average Amount",
+                        f"GHS {with_receipt_data['avg_amount'].iloc[0]:,.2f}",
+                    )
+                with col2:
+                    st.metric(
+                        "Minimum Amount",
+                        f"GHS {with_receipt_data['min_amount'].iloc[0]:,.2f}",
+                    )
+                with col3:
+                    st.metric(
+                        "Maximum Amount",
+                        f"GHS {with_receipt_data['max_amount'].iloc[0]:,.2f}",
+                    )
+
+                st.metric(
+                    "Total Amount Collected",
+                    f"GHS {with_receipt_data['total_amount'].iloc[0]:,.2f}",
+                )
+            else:
+                st.info("No course registration receipt data available")
+
+            # Get payment distribution by programme and level
+            level_payments = pd.read_sql_query(
+                """
+                SELECT 
+                    programme,
+                    level,
+                    COUNT(*) as registration_count,
+                    SUM(CASE WHEN receipt_path IS NOT NULL THEN 1 ELSE 0 END) as with_receipt,
+                    SUM(COALESCE(receipt_amount, 0)) as total_amount
+                FROM course_registration
+                WHERE programme IS NOT NULL AND programme != ''
+                GROUP BY programme, level
+                ORDER BY total_amount DESC
+                """,
+                conn,
+            )
+
+            if not level_payments.empty:
+                st.write("### Payments by Programme and Level")
+                fig = px.bar(
+                    level_payments,
+                    x="programme",
+                    y="total_amount",
+                    color="level",
+                    title="Total Payments by Programme and Level",
+                    labels={
+                        "programme": "Programme",
+                        "total_amount": "Total Amount (GHS)",
+                        "level": "Level",
+                    },
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+        else:
+            st.info("No course registration payment statistics available")
+
+    # Close the database connection
+    conn.close()
+
+
+# Function to integrate with the main generate_reports function
+def payment_statistics_section():
+    """
+    This function replaces the Payment Statistics section in the generate_reports function.
+    """
+    generate_payment_statistics()
+
+
 def check_disk_usage():
     usage = psutil.disk_usage("/")
     return usage.percent
+
 
 def system_resource_monitor():
     cpu_percent = psutil.cpu_percent(interval=1)
@@ -3337,8 +4383,9 @@ def system_resource_monitor():
     return {
         "cpu": cpu_percent,
         "memory_percent": memory.percent,
-        "disk_percent": disk.percent
+        "disk_percent": disk.percent,
     }
+
 
 def perform_backup():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3364,6 +4411,7 @@ def perform_backup():
         f.write(datetime.now().isoformat())
     return backup_filename
 
+
 def should_backup():
     need_backup = False
     now = datetime.now()
@@ -3379,7 +4427,6 @@ def should_backup():
     if check_disk_usage() >= 90:
         need_backup = True
     return need_backup
-
 
 
 # Student Portal Authentication and Views
@@ -3508,7 +4555,46 @@ def student_login_form():
 
 
 def student_portal():
+    # Inject custom CSS for styling
+    st.markdown(
+        """
+        <style>
+            .header-title {
+                font-size: 36px; 
+                font-weight: bold; 
+                color: #4a4a4a;
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .subheader {
+                font-size: 24px;
+                font-weight: bold;
+                color: #5a5a5a;
+                margin-bottom: 20px;
+            }
+            .info-box {
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                padding: 15px;
+                margin-bottom: 20px;
+                background-color: #f9f9f9;
+            }
+            .doc-image {
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            .tab-title {
+                font-size: 20px;
+                font-weight: bold;
+            }
+        </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
     st.header("🎓 Welcome to Your Student Portal")
+
     student_id = st.session_state.get("student_logged_in")
     if not student_id:
         st.error("You must be logged in to view this page.")
@@ -3519,7 +4605,6 @@ def student_portal():
     c = conn.cursor()
     c.execute("SELECT * FROM student_info WHERE student_id = ?", (student_id,))
     student = c.fetchone()
-
     c.execute(
         "SELECT * FROM course_registration WHERE student_id = ? ORDER BY date_registered DESC",
         (student_id,),
@@ -3527,7 +4612,7 @@ def student_portal():
     registrations = c.fetchall()
     conn.close()
 
-    # Create portal tabs with an additional "Proof of Registration" tab.
+    # Create portal tabs including Proof of Registration.
     tabs = st.tabs(
         [
             "Profile",
@@ -3539,9 +4624,11 @@ def student_portal():
         ]
     )
 
-    # Profile Tab (existing code: abbreviated for brevity)
+    # Profile Tab with improved styling layout.
     with tabs[0]:
-        st.subheader("Personal Information")
+        st.markdown(
+            "<div class='subheader'>Personal Information</div>", unsafe_allow_html=True
+        )
         col1, col2 = st.columns(2)
         with col1:
             if student[28] and os.path.exists(student[28]):  # passport_photo_path
@@ -3550,26 +4637,28 @@ def student_portal():
                     st.image(image, width=200, caption="Student Photo")
                 except Exception as e:
                     st.error(f"Error loading passport photo: {str(e)}")
-            st.write("**Basic Information**")
-            st.write(f"Student ID: {student[0]}")
-            st.write(f"Name: {student[1]} {student[2]}")
-            st.write(f"Date of Birth: {student[3]}")
-            st.write(f"Gender: {student[13]}")
-            st.write(f"Nationality: {student[11]}")
+            with st.container():
+                st.markdown(
+                    "<strong>Basic Information</strong>", unsafe_allow_html=True
+                )
+                st.info(
+                    f"Student ID: {student[0]}\nName: {student[1]} {student[2]}\nDOB: {student[3]}\nGender: {student[13]}\nNationality: {student[11]}"
+                )
         with col2:
-            st.write("**Contact Information**")
-            st.write(f"Email: {student[8]}")
-            st.write(f"Phone: {student[9]}")
-            st.write(f"Residential Address: {student[6]}")
-            st.write(f"Postal Address: {student[7]}")
-            st.write("**Academic Information**")
-            st.write(f"Programme: {student[-1]}")  # programme is the last column
-            st.write(f"Previous School: {student[23]}")
-            st.write(f"Qualification: {student[24]}")
+            st.markdown("<strong>Contact Information</strong>", unsafe_allow_html=True)
+            st.info(
+                f"Email: {student[8]}\nPhone: {student[9]}\nResidential Address: {student[6]}\nPostal Address: {student[7]}"
+            )
+            st.markdown("<strong>Academic Information</strong>", unsafe_allow_html=True)
+            st.info(
+                f"Programme: {student[-1]}\nPrevious School: {student[23]}\nQualification: {student[24]}"
+            )
 
-    # Course Registrations Tab (existing code snippet)
+    # Course Registrations Tab with enhanced layout.
     with tabs[1]:
-        st.subheader("Course Registrations")
+        st.markdown(
+            "<div class='subheader'>Course Registrations</div>", unsafe_allow_html=True
+        )
         if registrations:
             for reg in registrations:
                 with st.expander(f"Registration ID: {reg[0]} - {reg[11]}"):
@@ -3592,9 +4681,9 @@ def student_portal():
         else:
             st.info("No course registrations found.")
 
-    # Documents Tab (existing code snippet)
+    # Documents Tab with card-style presentation.
     with tabs[2]:
-        st.subheader("Documents")
+        st.markdown("<div class='subheader'>Documents</div>", unsafe_allow_html=True)
         documents = {
             "Ghana Card": student[27],
             "Passport Photo": student[28],
@@ -3603,24 +4692,27 @@ def student_portal():
             "Receipt": student[31],
         }
         for doc_name, doc_path in documents.items():
+            st.markdown(
+                f"<div class='info-box'><strong>{doc_name}</strong></div>",
+                unsafe_allow_html=True,
+            )
             if doc_path and os.path.exists(doc_path):
-                st.write(f"**{doc_name}**")
                 if doc_path.lower().endswith((".jpg", ".jpeg", ".png")):
                     st.image(doc_path, width=200, caption=doc_name)
                 else:
-                    st.write(f"[View {doc_name}]({doc_path})")
+                    st.markdown(f"[View {doc_name}]({doc_path})")
             else:
                 st.write(f"**{doc_name}:** Not uploaded")
 
-    # NEW: Proof of Registration Tab
+    # Proof of Registration Tab with enhanced instructions.
     with tabs[3]:
-        st.subheader("Proof of Registration")
+        st.markdown(
+            "<div class='subheader'>Proof of Registration</div>", unsafe_allow_html=True
+        )
         if not registrations:
             st.info("No course registration records found.")
         else:
-            # List all course registrations with an option to download the registration PDF.
             for reg in registrations:
-                # Map tuple to dictionary required by generate_course_registration_pdf.
                 reg_data = {
                     "student_id": reg[1],
                     "index_number": reg[2],
@@ -3636,9 +4728,9 @@ def student_portal():
                     "receipt_amount": reg[14],
                 }
                 st.markdown(
-                    f"**Registration Record (ID: {reg[0]}) - Date Registered: {reg[11]}**"
+                    f"<strong>Registration Record (ID: {reg[0]}) - Date Registered: {reg[11]}</strong>",
+                    unsafe_allow_html=True,
                 )
-                # When the student clicks the button, generate the PDF and provide a download.
                 if st.button(
                     f"Download Proof of Registration (ID: {reg[0]})",
                     key=f"download_{reg[0]}",
@@ -3653,14 +4745,15 @@ def student_portal():
                             file_name=pdf_file,
                             mime="application/pdf",
                         )
-                        # Clean up the generated PDF file.
                         os.remove(pdf_file)
                     else:
                         st.error("Error generating PDF. Please try again.")
 
-    # Settings Tab (existing code snippet)
+    # Settings Tab with visual separation.
     with tabs[4]:
-        st.subheader("Account Settings")
+        st.markdown(
+            "<div class='subheader'>Account Settings</div>", unsafe_allow_html=True
+        )
         if st.button("Change Password"):
             current_password = st.text_input("Current Password", type="password")
             new_password = st.text_input("New Password", type="password")
@@ -3692,26 +4785,24 @@ def student_portal():
             st.session_state.student_logged_in = None
             st.rerun()
 
-    with tabs[5]:  # Notifications tab
-        st.subheader("📢 Notifications")
-
+    # Notifications Tab with cleaner layout.
+    with tabs[5]:
+        st.markdown(
+            "<div class='subheader'>Notifications</div>", unsafe_allow_html=True
+        )
         notification_system = NotificationSystem()
         show_read = st.checkbox("Show read notifications")
-
         notifications = notification_system.get_notifications(
             student_id=student_id, include_read=show_read
         )
-
         col1, col2 = st.columns([4, 1])
         with col1:
-            st.write(
-                f"You have {len([n for n in notifications if not n['is_read']])} unread notifications"
-            )
+            unread_count = len([n for n in notifications if not n["is_read"]])
+            st.write(f"**You have {unread_count} unread notifications**")
         with col2:
             if st.button("Mark All as Read"):
                 notification_system.mark_all_as_read(student_id)
                 st.rerun()
-
         display_notifications(notifications)
 
 
@@ -3743,11 +4834,11 @@ def generate_program_student_list(program, level, students_df):
     elements = []
     header_data = [
         [
-            Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
+            RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
             Paragraph(
                 "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA", styles["CustomTitle"]
             ),
-            Image("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
+            RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
         ]
     ]
     header_table = RLTable(header_data, [2 * inch, 4 * inch, 2 * inch])
@@ -3965,7 +5056,7 @@ def insert_student_info(c, form_data, file_paths):
         file_paths.get("certificate_path"),
         None,  # transcript_path removed
         None,  # receipt_path removed
-        0.0,   # receipt_amount default=0
+        0.0,  # receipt_amount default=0
         "pending",
         datetime.now(),
         form_data.get("programme", ""),
@@ -3978,13 +5069,16 @@ def insert_student_info(c, form_data, file_paths):
 ##############################
 from email.mime.application import MIMEApplication  # For PDF attachments
 
+
 def send_emails():
     """
     Updated function to send emails to students with an optional PDF attachment.
     The user can upload a PDF file that will be attached to the email.
     """
     st.header("Send Emails to Students")
-    recipient_type = st.selectbox("Select Recipient Group", ["All Students", "By Programme", "Individual Student"])
+    recipient_type = st.selectbox(
+        "Select Recipient Group", ["All Students", "By Programme", "Individual Student"]
+    )
     subject = st.text_input("Email Subject")
     message_body = st.text_area("Email Message")
 
@@ -3995,7 +5089,9 @@ def send_emails():
     individual_id = None
     selected_programmes = []
     if recipient_type == "By Programme":
-        selected_programmes = st.multiselect("Select Programme(s)", options=["CIMG", "CIM-UK", "ICAG", "ACCA"])
+        selected_programmes = st.multiselect(
+            "Select Programme(s)", options=["CIMG", "CIM-UK", "ICAG", "ACCA"]
+        )
     elif recipient_type == "Individual Student":
         individual_id = st.text_input("Enter Student ID")
 
@@ -4016,7 +5112,10 @@ def send_emails():
                 recipients = [email for (email,) in results if email]
         elif recipient_type == "Individual Student":
             if individual_id:
-                cur.execute("SELECT email FROM student_info WHERE student_id = ?", (individual_id,))
+                cur.execute(
+                    "SELECT email FROM student_info WHERE student_id = ?",
+                    (individual_id,),
+                )
                 result = cur.fetchone()
                 if result and result[0]:
                     recipients = [result[0]]
@@ -4045,7 +5144,11 @@ def send_emails():
                     if attachment_path and os.path.exists(attachment_path):
                         with open(attachment_path, "rb") as f:
                             pdf_attachment = MIMEApplication(f.read(), _subtype="pdf")
-                        pdf_attachment.add_header("Content-Disposition", "attachment", filename=os.path.basename(attachment_path))
+                        pdf_attachment.add_header(
+                            "Content-Disposition",
+                            "attachment",
+                            filename=os.path.basename(attachment_path),
+                        )
                         msg.attach(pdf_attachment)
                 server.sendmail(SMTP_USERNAME, recipient, msg.as_string())
             server.quit()
@@ -4518,12 +5621,17 @@ class NotificationSystem:
         )
         conn.commit()
         conn.close()
-        
-        
-        
 
-    def create_notification(self, title, message, recipient_type, recipient_id=None,
-                            notification_type="info", metadata=None, expires_at=None):
+    def create_notification(
+        self,
+        title,
+        message,
+        recipient_type,
+        recipient_id=None,
+        notification_type="info",
+        metadata=None,
+        expires_at=None,
+    ):
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
         c.execute(
@@ -4541,7 +5649,7 @@ class NotificationSystem:
                 notification_type,
                 json.dumps(metadata) if metadata else None,
                 expires_at.isoformat() if expires_at else None,
-            )
+            ),
         )
         notification_id = c.lastrowid
         conn.commit()
@@ -4646,8 +5754,13 @@ class NotificationSystem:
     def delete_notification(self, notification_id):
         conn = sqlite3.connect("student_registration.db")
         c = conn.cursor()
-        c.execute("DELETE FROM notification_reads WHERE notification_id = ?", (notification_id,))
-        c.execute("DELETE FROM notifications WHERE notification_id = ?", (notification_id,))
+        c.execute(
+            "DELETE FROM notification_reads WHERE notification_id = ?",
+            (notification_id,),
+        )
+        c.execute(
+            "DELETE FROM notifications WHERE notification_id = ?", (notification_id,)
+        )
         conn.commit()
         conn.close()
 
@@ -4687,32 +5800,45 @@ def admin_notification_interface():
     tab1, tab2 = st.tabs(["Create Notification", "View/Manage Notifications"])
 
     with tab1:
-        recipient_type = st.selectbox("Recipient Type", ["all", "program", "student"],
-                                        help="Select who should receive this notification")
+        recipient_type = st.selectbox(
+            "Recipient Type",
+            ["all", "program", "student"],
+            help="Select who should receive this notification",
+        )
         recipient_id = None
         if recipient_type == "program":
-            recipient_id = st.selectbox("Select Program", ["CIMG", "CIM-UK", "ICAG", "ACCA"])
+            recipient_id = st.selectbox(
+                "Select Program", ["CIMG", "CIM-UK", "ICAG", "ACCA"]
+            )
         elif recipient_type == "student":
             conn = sqlite3.connect("student_registration.db")
             c = conn.cursor()
-            c.execute("SELECT student_id, surname, other_names FROM student_info ORDER BY surname, other_names")
+            c.execute(
+                "SELECT student_id, surname, other_names FROM student_info ORDER BY surname, other_names"
+            )
             students = c.fetchall()
             conn.close()
             if students:
-                options = [f"{id} - {surname} {other_names}" for id, surname, other_names in students]
+                options = [
+                    f"{id} - {surname} {other_names}"
+                    for id, surname, other_names in students
+                ]
                 selected = st.selectbox("Select Student", options)
                 recipient_id = selected.split(" - ")[0]
             else:
                 st.warning("No students found in database")
                 return
 
-
-        notification_type = st.selectbox("Notification Type", ["info", "warning", "success", "error"])
+        notification_type = st.selectbox(
+            "Notification Type", ["info", "warning", "success", "error"]
+        )
         title = st.text_input("Notification Title")
         message = st.text_area("Notification Message")
 
         # File uploader for optional PDF attachment.
-        attachment_file = st.file_uploader("Upload PDF Attachment (Optional)", type=["pdf"])
+        attachment_file = st.file_uploader(
+            "Upload PDF Attachment (Optional)", type=["pdf"]
+        )
 
         col1, col2 = st.columns(2)
         with col1:
@@ -4722,7 +5848,9 @@ def admin_notification_interface():
 
         metadata = {}
         if include_metadata:
-            metadata_str = st.text_area("Additional Data (JSON format)", help="Enter valid JSON data")
+            metadata_str = st.text_area(
+                "Additional Data (JSON format)", help="Enter valid JSON data"
+            )
             try:
                 metadata = json.loads(metadata_str) if metadata_str else {}
             except json.JSONDecodeError:
@@ -4734,13 +5862,12 @@ def admin_notification_interface():
             expires_at = st.date_input("Expiration Date")
             if expires_at:
                 expires_at = datetime.combine(expires_at, datetime.min.time())
-        
+
         # If a PDF attachment was provided, save it and add its path to metadata.
         if attachment_file is not None:
             attachment_path = save_uploaded_file(attachment_file, "uploads")
             if attachment_path:
                 metadata["attachment_path"] = attachment_path
-
 
         if st.button("Send Notification"):
             if not title or not message:
@@ -5040,8 +6167,6 @@ def modern_student_portal():
         display_modern_notifications(notifications, notification_system, student_id)
 
 
-
-
 def get_student_info(student_id):
     # Dummy implementation; replace with actual database retrieval
     return {
@@ -5070,7 +6195,6 @@ def get_student_registrations(student_id):
             "courses": "CS101|Intro to CS|3\nCS102|Data Structures|3",
         }
     ]
-
 
 
 def display_modern_profile(student):
@@ -5224,6 +6348,7 @@ def get_notification_color(notification_type):
     }
     return colors.get(notification_type, "#2196F3")
 
+
 def initialize_app():
     if "db_initialized" not in st.session_state:
         init_db()
@@ -5232,17 +6357,18 @@ def initialize_app():
     if "admin_logged_in" not in st.session_state:
         st.session_state.admin_logged_in = False
         st.session_state.admin_logged_in = False
-        
+
+
 class RegistrationConstraintsManager:
     """
     Manages registration constraints and storage cleanup.
     Prevents duplicate submissions and cleans up old files.
     """
-    
+
     def __init__(self, db_path: str = "student_registration.db"):
         self.db_path = db_path
         self.memory_threshold = 0.85  # 85% memory usage threshold
-        
+
     @contextmanager
     def optimized_connection(self):
         conn = None
@@ -5258,8 +6384,10 @@ class RegistrationConstraintsManager:
         memory_usage = psutil.Process(os.getpid()).memory_percent()
         if memory_usage > self.memory_threshold:
             gc.collect()
-            
-    def check_existing_registration(self, student_id: str) -> Tuple[bool, Optional[str]]:
+
+    def check_existing_registration(
+        self, student_id: str
+    ) -> Tuple[bool, Optional[str]]:
         """
         Check if student already has a registration.
         Returns (has_registration, status)
@@ -5268,10 +6396,10 @@ class RegistrationConstraintsManager:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT approval_status FROM student_info WHERE student_id = ?",
-                (student_id,)
+                (student_id,),
             )
             result = cursor.fetchone()
-            
+
             if result:
                 return True, result[0]
             return False, None
@@ -5283,28 +6411,28 @@ class RegistrationConstraintsManager:
         """
         if photo is None:
             return False, "Passport photo is mandatory"
-            
+
         try:
             image = Image.open(photo)
-            
+
             # Check image format
-            if image.format not in ['JPEG', 'PNG']:
+            if image.format not in ["JPEG", "PNG"]:
                 return False, "Photo must be in JPEG or PNG format"
-                
+
             # Check dimensions (e.g., minimum 200x200, maximum 1000x1000)
             if image.size[0] < 200 or image.size[1] < 200:
                 return False, "Photo dimensions too small (minimum 200x200 pixels)"
             if image.size[0] > 1000 or image.size[1] > 1000:
                 return False, "Photo dimensions too large (maximum 1000x1000 pixels)"
-                
+
             # Check file size (max 5MB)
             photo.seek(0, os.SEEK_END)
             file_size = photo.tell()
             if file_size > 5 * 1024 * 1024:  # 5MB in bytes
                 return False, "Photo file size too large (maximum 5MB)"
-                
+
             return True, "Photo validation successful"
-            
+
         except Exception as e:
             return False, f"Error validating photo: {str(e)}"
 
@@ -5315,19 +6443,19 @@ class RegistrationConstraintsManager:
         """
         with self.optimized_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Check if student info exists and is approved
             cursor.execute(
                 "SELECT approval_status FROM student_info WHERE student_id = ?",
-                (student_id,)
+                (student_id,),
             )
             student_info = cursor.fetchone()
-            
+
             if not student_info:
                 return False, "Student information not found"
-            if student_info[0] != 'approved':
+            if student_info[0] != "approved":
                 return False, "Student information not yet approved"
-                
+
             # Check existing course registrations
             cursor.execute(
                 """
@@ -5337,16 +6465,16 @@ class RegistrationConstraintsManager:
                 ORDER BY date_registered DESC 
                 LIMIT 1
                 """,
-                (student_id,)
+                (student_id,),
             )
             registration = cursor.fetchone()
-            
+
             if registration:
-                if registration[0] == 'pending':
+                if registration[0] == "pending":
                     return False, "Previous course registration pending approval"
-                if registration[0] == 'approved':
+                if registration[0] == "approved":
                     return False, "Course registration already approved"
-                    
+
             return True, "Course registration allowed"
 
     def get_registration_status(self, student_id: str) -> Dict:
@@ -5355,15 +6483,15 @@ class RegistrationConstraintsManager:
         """
         with self.optimized_connection() as conn:
             cursor = conn.cursor()
-            
+
             status = {
-                'has_student_info': False,
-                'student_info_status': None,
-                'has_course_registration': False,
-                'course_registration_status': None,
-                'last_update': None
+                "has_student_info": False,
+                "student_info_status": None,
+                "has_course_registration": False,
+                "course_registration_status": None,
+                "last_update": None,
             }
-            
+
             # Check student info
             cursor.execute(
                 """
@@ -5371,15 +6499,15 @@ class RegistrationConstraintsManager:
                 FROM student_info 
                 WHERE student_id = ?
                 """,
-                (student_id,)
+                (student_id,),
             )
             student_info = cursor.fetchone()
-            
+
             if student_info:
-                status['has_student_info'] = True
-                status['student_info_status'] = student_info[0]
-                status['last_update'] = student_info[1]
-            
+                status["has_student_info"] = True
+                status["student_info_status"] = student_info[0]
+                status["last_update"] = student_info[1]
+
             # Check course registration
             cursor.execute(
                 """
@@ -5389,89 +6517,99 @@ class RegistrationConstraintsManager:
                 ORDER BY date_registered DESC 
                 LIMIT 1
                 """,
-                (student_id,)
+                (student_id,),
             )
             registration = cursor.fetchone()
-            
+
             if registration:
-                status['has_course_registration'] = True
-                status['course_registration_status'] = registration[0]
-                status['last_update'] = max(status['last_update'], registration[1]) if status['last_update'] else registration[1]
-                
+                status["has_course_registration"] = True
+                status["course_registration_status"] = registration[0]
+                status["last_update"] = (
+                    max(status["last_update"], registration[1])
+                    if status["last_update"]
+                    else registration[1]
+                )
+
             return status
-        
-        
+
     def check_existing_student_info(self, student_id: str) -> bool:
         """
         Returns True if student info already exists.
         """
         with self.optimized_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM student_info WHERE student_id = ?", (student_id,))
+            cursor.execute(
+                "SELECT 1 FROM student_info WHERE student_id = ?", (student_id,)
+            )
             return cursor.fetchone() is not None
-    
+
     def check_existing_course_registration(self, student_id: str) -> bool:
         """
         Returns True if a course registration already exists for a student.
         """
         with self.optimized_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM course_registration WHERE student_id = ?", (student_id,))
+            cursor.execute(
+                "SELECT 1 FROM course_registration WHERE student_id = ?", (student_id,)
+            )
             return cursor.fetchone() is not None
 
     def cleanup_old_files(self, days_old: int = 30):
-            """
-            Remove files in the uploads directory that are older than 'days_old'
-            and are not referenced in the database.
-            """
-            with self.optimized_connection() as conn:
-                cursor = conn.cursor()
-                # Both SELECT statements are now modified to return three columns.
-                cursor.execute(
-                    """
+        """
+        Remove files in the uploads directory that are older than 'days_old'
+        and are not referenced in the database.
+        """
+        with self.optimized_connection() as conn:
+            cursor = conn.cursor()
+            # Both SELECT statements are now modified to return three columns.
+            cursor.execute(
+                """
                     SELECT ghana_card_path, passport_photo_path, certificate_path
                     FROM student_info
                     UNION
                     SELECT receipt_path, NULL, NULL
                     FROM course_registration
                     """
-                )
-                db_files = set()
-                for row in cursor.fetchall():
-                    # Update the set with each value in the tuple if it exists.
-                    db_files.update(path for path in row if path)
+            )
+            db_files = set()
+            for row in cursor.fetchall():
+                # Update the set with each value in the tuple if it exists.
+                db_files.update(path for path in row if path)
 
-            uploads_dir = "uploads"
-            if os.path.exists(uploads_dir):
-                current_time = datetime.now().timestamp()
-                for filename in os.listdir(uploads_dir):
-                    file_path = os.path.join(uploads_dir, filename)
-                    if os.path.isfile(file_path):
-                        file_age = current_time - os.path.getmtime(file_path)
-                        # Remove file if it is older than days_old and not referenced in db_files.
-                        if file_age > (days_old * 86400) and file_path not in db_files:
-                            try:
-                                os.remove(file_path)
-                                print(f"Removed old file: {file_path}")
-                            except Exception as e:
-                                print(f"Error removing file {file_path}: {str(e)}")
-                                
-                                
+        uploads_dir = "uploads"
+        if os.path.exists(uploads_dir):
+            current_time = datetime.now().timestamp()
+            for filename in os.listdir(uploads_dir):
+                file_path = os.path.join(uploads_dir, filename)
+                if os.path.isfile(file_path):
+                    file_age = current_time - os.path.getmtime(file_path)
+                    # Remove file if it is older than days_old and not referenced in db_files.
+                    if file_age > (days_old * 86400) and file_path not in db_files:
+                        try:
+                            os.remove(file_path)
+                            print(f"Removed old file: {file_path}")
+                        except Exception as e:
+                            print(f"Error removing file {file_path}: {str(e)}")
+
 
 def admin_login():
     st.sidebar.subheader("Admin Login")
     username = st.sidebar.text_input("Username", key="login_username")
     password = st.sidebar.text_input("Password", type="password", key="login_password")
     if st.sidebar.button("Login"):
-        if username == st.secrets["admin"]["username"] and password == st.secrets["admin"]["password"]:
+        if (
+            username == st.secrets["admin"]["username"]
+            and password == st.secrets["admin"]["password"]
+        ):
             st.session_state.admin_logged_in = True
             st.rerun()
         else:
             st.error("Invalid credentials")
 
+
 def main():
     initialize_app()
-    
+
     # Call cleanup for old files at app startup
     rc_manager = RegistrationConstraintsManager()
     rc_manager.cleanup_old_files(days_old=30)
@@ -5491,7 +6629,7 @@ def main():
 
         if page == "Student Information":
             student_info_form()
-            
+
         elif page == "Course Registration":
             course_registration_form()
         else:
@@ -5510,8 +6648,6 @@ def main():
                         """,
                         unsafe_allow_html=True,
                     )
-            
-
 
 
 if __name__ == "__main__":
