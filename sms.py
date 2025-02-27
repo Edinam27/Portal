@@ -877,33 +877,48 @@ def generate_course_registration_pdf(data):
     student_info = c.fetchone()
     conn.close()
 
+    # Header with logo and student photo
     header_elements = []
+    
+    # First column: UPSA logo
+    header_elements.append(
+        RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
+    )
+    
+    # Middle column: Title
+    header_elements.append(
+        Paragraph(
+            "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>Proof of Registration",
+            styles["CustomTitle"],
+        )
+    )
+    
+    # Third column: Student photo or UPSA logo if no photo
     if student_info and student_info[0] and os.path.exists(student_info[0]):
         try:
+            # Create a BytesIO object to hold the image data
+            img_buffer = io.BytesIO()
+            
+            # Open, resize and save the image to the buffer
             with PILImage.open(student_info[0]) as img:
-                img.thumbnail((100, 100))
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format="JPEG")
+                img.thumbnail((100, 100))  # Resize while maintaining aspect ratio
+                img.save(img_buffer, format=img.format)
                 img_buffer.seek(0)
-                header_elements.append(Image(img_buffer))
+            
+            # Add the image from the buffer
+            header_elements.append(RLImage(img_buffer, width=1.2 * inch, height=1.2 * inch))
         except Exception as e:
+            # If there's an error, use the UPSA logo instead
             header_elements.append(
                 RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
             )
     else:
+        # If no photo, use the UPSA logo
         header_elements.append(
             RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch)
         )
-
-    header_elements.extend(
-        [
-            Paragraph(
-                "UNIVERSITY OF PROFESSIONAL STUDIES, ACCRA<br/>Proof of Registration",
-                styles["CustomTitle"],
-            ),
-            RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
-        ]
-    )
+    
+    # Create the header table
     header_table = RLTable([header_elements], [2 * inch, 4 * inch, 2 * inch])
     header_table.setStyle(
         TableStyle(
@@ -1147,6 +1162,7 @@ def review_course_registration(form_data):
             st.write(f"**Total Credit Hours:** {form_data['total_credits']}")
     else:
         st.warning("No courses selected")
+        
 
 
 def save_student_info(form_data):
@@ -1294,7 +1310,7 @@ def student_info_form():
                     conn.close()
 
 
-def validate_file(uploaded_file, max_size_mb=5):
+def validate_file(uploaded_file, max_size_mb=6):
     if uploaded_file.size > max_size_mb * 1024 * 1024:
         raise ValueError(f"File size exceeds {max_size_mb}MB limit")
 
@@ -1365,12 +1381,25 @@ def download_all_documents():
                     _, ext = os.path.splitext(receipt_path)
                     archive_path = f"{reg_dir}/registration_{reg_id}_receipt{ext}"
                     zipf.write(receipt_path, archive_path)
+                    
+        # Use the cleanup handler context manager
+        with zip_cleanup_handler.cleanup_after_download(zip_filename):
+            with open(zip_filename, "rb") as f:
+                st.download_button(
+                    label="Download Documents ZIP",
+                    data=f,
+                    file_name=zip_filename,
+                    mime="application/zip"
+                )
 
         return zip_filename
+    
+
 
     except Exception as e:
         st.error(f"Error creating zip file: {str(e)}")
         return None
+    
 
     finally:
         conn.close()
@@ -4413,19 +4442,37 @@ def perform_backup():
 
 
 def should_backup():
+    """
+    Determines if a database backup is needed based on:
+    1. Time since last backup (>30 days)
+    2. Current disk usage (≥90%)
+    
+    Returns:
+        bool: True if backup is recommended, False otherwise
+    """
     need_backup = False
     now = datetime.now()
+    
+    # Check time-based criterion
     if os.path.exists("last_backup.txt"):
         with open("last_backup.txt", "r") as f:
             last_backup_str = f.read().strip()
             if last_backup_str:
-                last_backup = datetime.fromisoformat(last_backup_str)
-                if now - last_backup > timedelta(days=30):
+                try:
+                    last_backup = datetime.fromisoformat(last_backup_str)
+                    if now - last_backup > timedelta(days=30):
+                        need_backup = True
+                except (ValueError, TypeError):
+                    # If date parsing fails, recommend backup
                     need_backup = True
     else:
+        # No record of previous backup, so recommend one
         need_backup = True
+    
+    # Check disk usage criterion
     if check_disk_usage() >= 90:
         need_backup = True
+        
     return need_backup
 
 
@@ -4807,9 +4854,7 @@ def student_portal():
 
 
 def generate_program_student_list(program, level, students_df):
-    filename = (
-        f"{program}_{level}_students_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-    )
+    filename = f"{program}_{level}_students_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     doc = SimpleDocTemplate(
         filename,
         pagesize=A4,
@@ -4832,6 +4877,8 @@ def generate_program_student_list(program, level, students_df):
     )
 
     elements = []
+    
+    # Header with logo
     header_data = [
         [
             RLImage("upsa_logo.jpg", width=1.2 * inch, height=1.2 * inch),
@@ -4853,78 +4900,88 @@ def generate_program_student_list(program, level, students_df):
     elements.append(header_table)
     elements.append(Spacer(1, 20))
 
+    # Program information
     elements.append(Paragraph(f"Program: {program}", styles["Heading2"]))
     elements.append(Paragraph(f"Level: {level}", styles["Heading2"]))
     elements.append(Paragraph(f"Total Students: {len(students_df)}", styles["Normal"]))
     elements.append(Spacer(1, 20))
 
+    # Create a table for all students
+    table_data = []
+    
+    # Add header row
+    table_data.append([
+        Paragraph("<b>Photo</b>", styles["Normal"]),
+        Paragraph("<b>Student ID</b>", styles["Normal"]),
+        Paragraph("<b>Name</b>", styles["Normal"]),
+        Paragraph("<b>Academic Info</b>", styles["Normal"])
+    ])
+    
+    # Add student rows
     for _, student in students_df.iterrows():
-        student_data = []
-        if student["passport_photo_path"] and os.path.exists(
-            student["passport_photo_path"]
-        ):
+        # Photo cell
+        photo_cell = None
+        if student["passport_photo_path"] and os.path.exists(student["passport_photo_path"]):
             try:
-                photo = Image(
-                    student["passport_photo_path"], width=1 * inch, height=1 * inch
-                )
-                student_data.append(
-                    [
-                        photo,
-                        Paragraph(
-                            f"<b>Name:</b> {student['surname']}, {student['other_names']}<br/>"
-                            f"<b>Student ID:</b> {student['student_id']}<br/>"
-                            f"<b>Academic Year:</b> {student['academic_year']}<br/>"
-                            f"<b>Semester:</b> {student['semester']}",
-                            styles["Normal"],
-                        ),
-                    ]
-                )
-            except:
-                student_data.append(
-                    [
-                        Paragraph("No Photo", styles["Normal"]),
-                        Paragraph(
-                            f"<b>Name:</b> {student['surname']}, {student['other_names']}<br/>"
-                            f"<b>Student ID:</b> {student['student_id']}<br/>"
-                            f"<b>Academic Year:</b> {student['academic_year']}<br/>"
-                            f"<b>Semester:</b> {student['semester']}",
-                            styles["Normal"],
-                        ),
-                    ]
-                )
+                # Use RLImage instead of Image for better compatibility
+                photo_cell = RLImage(student["passport_photo_path"], width=1 * inch, height=1 * inch)
+            except Exception as e:
+                # If there's an error loading the image, use a placeholder text
+                photo_cell = Paragraph("No Photo", styles["Normal"])
         else:
-            student_data.append(
-                [
-                    Paragraph("No Photo", styles["Normal"]),
-                    Paragraph(
-                        f"<b>Name:</b> {student['surname']}, {student['other_names']}<br/>"
-                        f"<b>Student ID:</b> {student['student_id']}<br/>"
-                        f"<b>Academic Year:</b> {student['academic_year']}<br/>"
-                        f"<b>Semester:</b> {student['semester']}",
-                        styles["Normal"],
-                    ),
-                ]
-            )
-        student_table = RLTable(student_data, [1.5 * inch, 5 * inch])
-        student_table.setStyle(
-            TableStyle(
-                [
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("ALIGN", (0, 0), (0, -1), "CENTER"),
-                    ("PADDING", (0, 0), (-1, -1), 6),
-                ]
-            )
+            photo_cell = Paragraph("No Photo", styles["Normal"])
+        
+        # Student info cells
+        student_id_cell = Paragraph(student["student_id"], styles["Normal"])
+        name_cell = Paragraph(f"{student['surname']}, {student['other_names']}", styles["Normal"])
+        academic_info = Paragraph(
+            f"Academic Year: {student['academic_year']}<br/>"
+            f"Semester: {student['semester']}",
+            styles["Normal"]
         )
-        elements.append(student_table)
-        elements.append(Spacer(1, 10))
+        
+        # Add row to table
+        table_data.append([photo_cell, student_id_cell, name_cell, academic_info])
+    
+    # Create the table with appropriate column widths
+    students_table = RLTable(
+        table_data, 
+        colWidths=[1.2 * inch, 1.5 * inch, 2.5 * inch, 2.3 * inch]
+    )
+    
+    # Style the table
+    students_table.setStyle(
+        TableStyle(
+            [
+                # Add grid lines
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                # Style header row
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003366")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                # Align cells
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),  # Center photos
+                ("ALIGN", (1, 0), (1, -1), "CENTER"),  # Center student IDs
+                # Add padding
+                ("PADDING", (0, 0), (-1, -1), 6),
+                # Alternate row colors for better readability
+                *[("BACKGROUND", (0, i), (-1, i), colors.HexColor("#f5f5f5")) for i in range(1, len(table_data)) if i % 2 == 0]
+            ]
+        )
+    )
+    
+    elements.append(students_table)
     elements.append(Spacer(1, 20))
+    
+    # Footer
     elements.append(
         Paragraph(
             f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             styles["Normal"],
         )
     )
+    
+    # Build the PDF
     doc.build(elements)
     return filename
 
@@ -5226,107 +5283,6 @@ def generate_batch_pdfs(document_type="student_info"):
             shutil.rmtree(temp_dir)
 
 
-def download_forms():
-    st.subheader("Download Forms")
-
-    conn = sqlite3.connect("student_registration.db")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.write("**Student Information Database**")
-        student_df = pd.read_sql_query(
-            """
-            SELECT 
-                student_id, surname, other_names, date_of_birth, 
-                place_of_birth, home_town, residential_address, 
-                postal_address, email, telephone, ghana_card_id, 
-                nationality, marital_status, gender, religion, 
-                denomination, disability_status, disability_description,
-                guardian_name, guardian_relationship, guardian_occupation,
-                guardian_address, guardian_telephone, previous_school,
-                qualification_type, completion_year, aggregate_score,
-                ghana_card_path, passport_photo_path, transcript_path,
-                certificate_path, receipt_path, receipt_amount,
-                approval_status, created_at, programme
-            FROM student_info
-        """,
-            conn,
-        )
-
-        if not student_df.empty:
-            csv = student_df.to_csv(index=False)
-            st.download_button(
-                label="Download Student Database (CSV)",
-                data=csv,
-                file_name=f"student_database_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-            )
-        else:
-            st.info("No student records available")
-
-    with col2:
-        st.write("**Course Registration Database**")
-        registration_df = pd.read_sql_query("SELECT * FROM course_registration", conn)
-
-        if not registration_df.empty:
-            csv = registration_df.to_csv(index=False)
-            st.download_button(
-                label="Download Course Registrations (CSV)",
-                data=csv,
-                file_name=f"course_registrations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-            )
-        else:
-            st.info("No registration records available")
-
-    st.markdown("---")
-
-    st.subheader("Download Filtered Data")
-
-    filter_col1, filter_col2 = st.columns(2)
-
-    with filter_col1:
-        status_filter = st.selectbox(
-            "Filter by Approval Status", ["All", "Pending", "Approved", "Rejected"]
-        )
-
-    with filter_col2:
-        date_range = st.date_input(
-            "Select Date Range",
-            value=(datetime.now() - timedelta(days=30), datetime.now()),
-            max_value=datetime.now(),
-        )
-
-    if len(date_range) == 2:
-        start_date, end_date = date_range
-
-        query = """
-            SELECT * FROM student_info 
-            WHERE date_of_birth BETWEEN ? AND ?
-        """
-
-        if status_filter != "All":
-            query += f" AND approval_status = '{status_filter.lower()}'"
-
-        try:
-            filtered_df = pd.read_sql_query(query, conn, params=(start_date, end_date))
-
-            if not filtered_df.empty:
-                csv = filtered_df.to_csv(index=False)
-                st.download_button(
-                    label="Download Filtered Data (CSV)",
-                    data=csv,
-                    file_name=f"filtered_student_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.info("No records found for the selected filters")
-
-        except pd.errors.DatabaseError:
-            st.error("Error filtering data. Please try different filter criteria.")
-
-    conn.close()
 
 
 import zipfile
@@ -6060,111 +6016,175 @@ def load_custom_css():
     )
 
 
-def modern_student_portal():
+import os
+import time
+import threading
+from typing import Optional, List
+import logging
+from contextlib import contextmanager
+
+class ZipFileCleanupHandler:
     """
-    Enhanced student portal with modern UI and responsive design.
-    Dummy helper functions are used below for illustration.
+    Handles the cleanup of temporary zip files after they've been downloaded.
+    
+    This class provides both immediate cleanup functionality and a background
+    cleanup service that periodically scans for and removes old zip files.
     """
-    # Load custom CSS
-    load_custom_css()
-
-    # Check if student is logged in (dummy session variable)
-    student_id = st.session_state.get("student_logged_in")
-    if not student_id:
-        st.error("You must be logged in to view this page.")
-        return
-
-    # Fetch student data (dummy implementation; replace with real DB functions)
-    student = get_student_info(student_id)
-    registrations = get_student_registrations(student_id)
-
-    # Fetch notifications (dummy NotificationSystem)
-    notification_system = NotificationSystem()
-    notifications = notification_system.get_notifications(student_id)
-    unread_count = len([n for n in notifications if not n["is_read"]])
-
-    # Header Section with Quick Stats
-    st.markdown(
-        f"""
-    <div class="portal-header">
-        <h1>Welcome, {student.get('surname', '')} {student.get('other_names', '')}</h1>
-        <p>Student ID: {student.get('student_id', '')}</p>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    # Quick Stats Grid
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(
-            f"""
-        <div class="stat-card">
-            <h3>Programme</h3>
-            <p>{student.get('programme', 'N/A')}</p>
-        </div>
-        """,
-            unsafe_allow_html=True,
+    
+    def __init__(self, cleanup_delay: int = 5, scan_interval: int = 3600):
+        """
+        Initialize the zip file cleanup handler.
+        
+        Args:
+            cleanup_delay: Seconds to wait before deleting a file after download (default: 5)
+            scan_interval: Seconds between background cleanup scans (default: 3600 = 1 hour)
+        """
+        self.cleanup_delay = cleanup_delay
+        self.scan_interval = scan_interval
+        self.pending_deletions = set()
+        self.logger = self._setup_logger()
+        self._start_background_cleanup()
+    
+    def _setup_logger(self) -> logging.Logger:
+        """Set up a logger for the cleanup handler."""
+        logger = logging.getLogger("ZipFileCleanup")
+        logger.setLevel(logging.INFO)
+        
+        # Avoid adding duplicate handlers if logger already exists
+        if not logger.handlers:
+            handler = logging.FileHandler("zip_cleanup.log")
+            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        
+        return logger
+    
+    def _start_background_cleanup(self):
+        """Start the background cleanup thread."""
+        cleanup_thread = threading.Thread(
+            target=self._background_cleanup_service, 
+            daemon=True
         )
-    with col2:
-        st.markdown(
-            f"""
-        <div class="stat-card">
-            <h3>Notifications</h3>
-            <p>{unread_count} unread</p>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-    with col3:
-        st.markdown(
-            f"""
-        <div class="stat-card">
-            <h3>Registrations</h3>
-            <p>{len(registrations)} total</p>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
+        cleanup_thread.start()
+        self.logger.info("Background cleanup service started")
+    
+    def _background_cleanup_service(self):
+        """Background service that periodically cleans up old zip files."""
+        while True:
+            try:
+                self.cleanup_old_zip_files()
+                time.sleep(self.scan_interval)
+            except Exception as e:
+                self.logger.error(f"Error in background cleanup: {str(e)}")
+                time.sleep(60)  # Wait a minute before retrying if there's an error
+    
+    def schedule_cleanup(self, filepath: str):
+        """
+        Schedule a file for cleanup after download.
+        
+        Args:
+            filepath: Path to the file that should be deleted
+        """
+        if not filepath or not os.path.exists(filepath):
+            return
+            
+        self.pending_deletions.add(filepath)
+        self.logger.info(f"Scheduled cleanup for: {filepath}")
+        
+        # Start a thread to delete the file after the delay
+        threading.Thread(
+            target=self._delayed_delete,
+            args=(filepath, self.cleanup_delay),
+            daemon=True
+        ).start()
+    
+    def _delayed_delete(self, filepath: str, delay: int):
+        """
+        Delete a file after a specified delay.
+        
+        Args:
+            filepath: Path to the file to delete
+            delay: Seconds to wait before deletion
+        """
+        try:
+            time.sleep(delay)
+            if os.path.exists(filepath):
+                os.remove(filepath)
+                self.logger.info(f"Deleted file after download: {filepath}")
+            self.pending_deletions.discard(filepath)
+        except Exception as e:
+            self.logger.error(f"Error deleting file {filepath}: {str(e)}")
+    
+    def cleanup_old_zip_files(self, max_age_hours: int = 24, directories: Optional[List[str]] = None):
+        """
+        Clean up old zip files that may have been missed by the immediate cleanup.
+        
+        Args:
+            max_age_hours: Maximum age of files in hours before deletion (default: 24)
+            directories: List of directories to scan (default: current directory and common temp dirs)
+        """
+        if directories is None:
+            directories = [
+                ".",  # Current directory
+                "temp_export",
+                "temp_pdfs",
+                "temp_downloads",
+                "temp_import",
+                "db_backups"
+            ]
+        
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+        
+        for directory in directories:
+            if not os.path.exists(directory):
+                continue
+                
+            for filename in os.listdir(directory):
+                if not filename.endswith(".zip"):
+                    continue
+                    
+                filepath = os.path.join(directory, filename)
+                if not os.path.isfile(filepath):
+                    continue
+                
+                # Skip files that are pending deletion
+                if filepath in self.pending_deletions:
+                    continue
+                
+                file_age = current_time - os.path.getmtime(filepath)
+                if file_age > max_age_seconds:
+                    try:
+                        os.remove(filepath)
+                        self.logger.info(f"Cleaned up old zip file: {filepath}")
+                    except Exception as e:
+                        self.logger.error(f"Error cleaning up old file {filepath}: {str(e)}")
 
-    # Main Content Tabs - Mobile Friendly Navigation
-    tabs = ["Dashboard", "Profile", "Courses", "Documents", "Notifications"]
-    selected_tab = st.radio("Navigation", tabs, horizontal=True)
+    @contextmanager
+    def cleanup_after_download(self, filepath: str):
+        """
+        Context manager that ensures a file is cleaned up after download.
+        
+        Usage:
+            with zip_cleanup_handler.cleanup_after_download(zip_filename):
+                st.download_button(
+                    label="Download ZIP",
+                    data=open(zip_filename, "rb").read(),
+                    file_name=zip_filename,
+                    mime="application/zip"
+                )
+        
+        Args:
+            filepath: Path to the file that should be deleted after download
+        """
+        try:
+            yield filepath
+        finally:
+            self.schedule_cleanup(filepath)
 
-    if selected_tab == "Dashboard":
-        st.subheader("📊 Dashboard")
-        st.markdown("### Recent Activity")
-        if registrations:
-            latest_reg = registrations[0]
-            st.info(
-                f"Latest registration: {latest_reg.get('programme')} - {latest_reg.get('semester')} Semester"
-            )
-        # Quick Actions
-        st.markdown("### Quick Actions")
-        qa_col1, qa_col2 = st.columns(2)
-        with qa_col1:
-            if st.button("📄 Download Registration Proof", use_container_width=True):
-                if registrations:
-                    pdf_file = generate_course_registration_pdf(registrations[0])
-                    with open(pdf_file, "rb") as f:
-                        st.download_button(
-                            label="Download PDF",
-                            data=f,
-                            file_name=pdf_file,
-                            mime="application/pdf",
-                            use_container_width=True,
-                        )
-        with qa_col2:
-            if st.button("📝 Update Profile", use_container_width=True):
-                st.session_state.show_profile_edit = True
-    elif selected_tab == "Profile":
-        display_modern_profile(student)
-    elif selected_tab == "Courses":
-        display_modern_courses(registrations)
-    elif selected_tab == "Documents":
-        display_modern_documents(student)
-    elif selected_tab == "Notifications":
-        display_modern_notifications(notifications, notification_system, student_id)
+
+# Create a singleton instance
+zip_cleanup_handler = ZipFileCleanupHandler()
 
 
 def get_student_info(student_id):
@@ -6195,158 +6215,9 @@ def get_student_registrations(student_id):
             "courses": "CS101|Intro to CS|3\nCS102|Data Structures|3",
         }
     ]
+    
 
 
-def display_modern_profile(student):
-    st.subheader("👤 Profile Information")
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        if student.get("passport_photo_path") and os.path.exists(
-            student["passport_photo_path"]
-        ):
-            try:
-                img = PILImage.open(student["passport_photo_path"])
-                st.image(img, width=200, use_column_width=True, caption="Profile Photo")
-            except Exception:
-                st.image(
-                    "https://via.placeholder.com/200",
-                    use_column_width=True,
-                    caption="Profile Photo",
-                )
-        else:
-            st.image(
-                "https://via.placeholder.com/200",
-                use_column_width=True,
-                caption="Profile Photo",
-            )
-    with col2:
-        st.markdown("### Personal Details")
-        info_grid = {
-            "Full Name": f"{student.get('surname', '')} {student.get('other_names', '')}",
-            "Student ID": student.get("student_id", ""),
-            "Programme": student.get("programme", ""),
-            "Gender": student.get("gender", "N/A"),
-            "Date of Birth": student.get("date_of_birth", "N/A"),
-            "Nationality": student.get("nationality", "N/A"),
-        }
-        for key, value in info_grid.items():
-            st.markdown(f"**{key}:** {value}")
-        st.markdown("### Contact Information")
-        contact_col1, contact_col2 = st.columns(2)
-        with contact_col1:
-            st.markdown(f"**Email:** {student.get('email', '')}")
-            st.markdown(f"**Phone:** {student.get('telephone', '')}")
-        with contact_col2:
-            st.markdown(f"**Address:** {student.get('residential_address', '')}")
-            st.markdown(f"**Postal:** {student.get('postal_address', '')}")
-
-
-def display_modern_courses(registrations):
-    st.subheader("📚 Course Registrations")
-    if not registrations:
-        st.info("No course registrations found.")
-        return
-    for reg in registrations:
-        with st.expander(
-            f"📘 {reg.get('programme')} - {reg.get('semester')} Semester", expanded=True
-        ):
-            st.markdown(f"**Level:** {reg.get('level', '')}")
-            st.markdown(f"**Academic Year:** {reg.get('academic_year', '')}")
-            if reg.get("courses"):
-                st.markdown("### Registered Courses")
-                courses = reg["courses"].split("\n")
-                for course in courses:
-                    if "|" in course:
-                        code, title, credits = course.split("|")
-                        st.markdown(f"- **{code}**: {title} ({credits} credits)")
-            st.markdown("### Semester Progress")
-            progress = 0.65  # Dummy value; calculate with actual data
-            st.progress(progress)
-            st.markdown(f"Semester Progress: {int(progress * 100)}%")
-
-
-def display_modern_documents(student):
-    st.subheader("📑 Documents")
-    documents = {
-        "Ghana Card": student.get("ghana_card_path"),
-        "Passport Photo": student.get("passport_photo_path"),
-        "Transcript": student.get("transcript_path"),
-        "Certificate": student.get("certificate_path"),
-        "Receipt": student.get("receipt_path"),
-    }
-    doc_icons = {
-        "Ghana Card": "🪪",
-        "Passport Photo": "📸",
-        "Transcript": "📄",
-        "Certificate": "🎓",
-        "Receipt": "🧾",
-    }
-    for doc_name, doc_path in documents.items():
-        st.markdown(f"**{doc_icons.get(doc_name, '📄')} {doc_name}:**")
-        if doc_path and os.path.exists(doc_path):
-            if doc_path.lower().endswith((".jpg", ".jpeg", ".png")):
-                try:
-                    img = PILImage.open(doc_path)
-                    st.image(img, width=300)
-                except Exception:
-                    st.error(f"Error displaying {doc_name}")
-            else:
-                st.markdown(f"[View {doc_name}]({doc_path})")
-            st.download_button(
-                f"Download {doc_name}",
-                open(doc_path, "rb").read(),
-                file_name=os.path.basename(doc_path),
-                mime="application/octet-stream",
-            )
-        else:
-            st.warning(f"No {doc_name} uploaded")
-        st.markdown("---")
-
-
-def display_modern_notifications(notifications, notification_system, student_id):
-    st.subheader("🔔 Notifications")
-    if not notifications:
-        st.info("No notifications to display")
-        return
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        filter_type = st.selectbox("Filter by", ["All", "Unread", "Read"])
-    with col2:
-        if st.button("Mark All Read", use_container_width=True):
-            notification_system.mark_all_as_read(student_id)
-            st.rerun()
-    filtered_notifications = notifications
-    if filter_type == "Unread":
-        filtered_notifications = [n for n in notifications if not n["is_read"]]
-    elif filter_type == "Read":
-        filtered_notifications = [n for n in notifications if n["is_read"]]
-    for notif in filtered_notifications:
-        with st.container():
-            st.markdown(
-                f"""
-            <div style="padding: 1rem; margin: 0.5rem 0; background: white; border-radius: 8px; 
-                        box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-left: 4px solid {get_notification_color(notif['type'])};">
-                <h4>{notif['title']}</h4>
-                <p>{notif['message']}</p>
-                <small style="color: #666;">{notif['created_at']} • {"Read" if notif["is_read"] else "Unread"}</small>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-            if not notif["is_read"]:
-                if st.button("Mark as Read", key=f"read_{notif['id']}"):
-                    notification_system.mark_as_read(notif["id"], student_id)
-                    st.rerun()
-
-
-def get_notification_color(notification_type):
-    colors = {
-        "info": "#2196F3",
-        "success": "#4CAF50",
-        "warning": "#FFC107",
-        "error": "#F44336",
-    }
-    return colors.get(notification_type, "#2196F3")
 
 
 def initialize_app():
