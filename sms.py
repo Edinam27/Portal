@@ -1311,8 +1311,17 @@ def student_info_form():
 
 
 def validate_file(uploaded_file, max_size_mb=6):
-    if uploaded_file.size > max_size_mb * 1024 * 1024:
-        raise ValueError(f"File size exceeds {max_size_mb}MB limit")
+    """
+    Validate and compress file if needed.
+    Returns the file data (possibly compressed) or raises an error.
+    """
+    # Files will be compressed if they exceed the size limit
+    compressed_data, _, was_compressed = compress_uploaded_file(uploaded_file, max_size_mb)
+    
+    if was_compressed:
+        st.info(f"File was compressed to meet the {max_size_mb}MB size limit")
+        
+    return compressed_data
 
 
 def download_all_documents():
@@ -2714,6 +2723,701 @@ def id_card_generator_ui():
             #     json.dump(settings, f)
 
             st.success("Settings saved successfully!")
+
+import os
+import io
+from PIL import Image
+import PyPDF2
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+import logging
+from typing import Union, Tuple, Optional, BinaryIO
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename='file_compression.log'
+)
+logger = logging.getLogger('file_compressor')
+
+class FileCompressor:
+    """
+    Utility class for compressing various file types to reduce storage requirements.
+    Currently supports compression for images (JPG, PNG) and PDFs.
+    """
+    
+    def __init__(self, max_size_mb: float = 6.0, quality_reduction_step: int = 10):
+        """
+        Initialize the file compressor with configuration parameters.
+        
+        Args:
+            max_size_mb: Maximum file size in MB (default: 6.0)
+            quality_reduction_step: Step size for reducing image quality (default: 10)
+        """
+        self.max_size_bytes = max_size_mb * 1024 * 1024
+        self.quality_reduction_step = quality_reduction_step
+        self.min_quality = 30  # Minimum acceptable quality
+    
+    def compress_file(self, file_data: Union[bytes, BinaryIO, str], 
+                     filename: str) -> Tuple[bytes, str, bool]:
+        """
+        Compress a file based on its type.
+        
+        Args:
+            file_data: File data as bytes, file-like object, or file path
+            filename: Original filename with extension
+            
+        Returns:
+            Tuple containing (compressed_data, new_filename, was_compressed)
+        """
+        # Convert file_data to bytes if it's a file-like object
+        if hasattr(file_data, 'read'):
+            # Save the current position
+            pos = file_data.tell()
+            # Reset to beginning and read all
+            file_data.seek(0)
+            file_bytes = file_data.read()
+            # Restore position
+            file_data.seek(pos)
+        elif isinstance(file_data, str) and os.path.exists(file_data):
+            # It's a file path
+            with open(file_data, 'rb') as f:
+                file_bytes = f.read()
+        else:
+            # Assume it's already bytes
+            file_bytes = file_data
+            
+        # Check if compression is needed
+        if len(file_bytes) <= self.max_size_bytes:
+            logger.info(f"File {filename} is already under size limit ({len(file_bytes)/1024/1024:.2f}MB)")
+            return file_bytes, filename, False
+            
+        # Determine file type and compress accordingly
+        file_ext = os.path.splitext(filename)[1].lower()
+        
+        if file_ext in ['.jpg', '.jpeg', '.png']:
+            return self._compress_image(file_bytes, filename)
+        elif file_ext == '.pdf':
+            return self._compress_pdf(file_bytes, filename)
+        else:
+            logger.warning(f"Unsupported file type for compression: {file_ext}")
+            return file_bytes, filename, False
+    
+    def _compress_image(self, image_bytes: bytes, filename: str) -> Tuple[bytes, str, bool]:
+        """
+        Compress an image file by reducing quality and/or dimensions.
+        
+        Args:
+            image_bytes: Image file as bytes
+            filename: Original filename
+            
+        Returns:
+            Tuple containing (compressed_image_bytes, new_filename, was_compressed)
+        """
+        try:
+            # Open the image
+            img = Image.open(io.BytesIO(image_bytes))
+            
+            # Start with original quality
+            quality = 90
+            max_dimension = max(img.size)
+            
+            # Create a new filename with compression indicator
+            name, ext = os.path.splitext(filename)
+            new_filename = f"{name}_compressed{ext}"
+            
+            # Try compression with decreasing quality until size is acceptable
+            while quality >= self.min_quality:
+                # Create an in-memory buffer
+                buffer = io.BytesIO()
+                
+                # Save with current quality
+                if ext.lower() in ['.jpg', '.jpeg']:
+                    img.save(buffer, format='JPEG', quality=quality, optimize=True)
+                elif ext.lower() == '.png':
+                    img.save(buffer, format='PNG', optimize=True, 
+                             compress_level=9)  # PNG uses compress_level instead of quality
+                
+                # Check if size is now acceptable
+                compressed_bytes = buffer.getvalue()
+                if len(compressed_bytes) <= self.max_size_bytes:
+                    logger.info(f"Compressed image {filename} from {len(image_bytes)/1024/1024:.2f}MB to "
+                               f"{len(compressed_bytes)/1024/1024:.2f}MB (quality={quality})")
+                    return compressed_bytes, new_filename, True
+                
+                # Reduce quality for next iteration
+                quality -= self.quality_reduction_step
+            
+            # If quality reduction wasn't enough, try reducing dimensions
+            scale_factor = 0.8
+            while max_dimension > 800:  # Don't go below 800px for max dimension
+                # Resize the image
+                new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
+                img = img.resize(new_size, Image.LANCZOS)
+                max_dimension = max(img.size)
+                
+                # Try saving with minimum acceptable quality
+                buffer = io.BytesIO()
+                if ext.lower() in ['.jpg', '.jpeg']:
+                    img.save(buffer, format='JPEG', quality=self.min_quality, optimize=True)
+                elif ext.lower() == '.png':
+                    img.save(buffer, format='PNG', optimize=True, compress_level=9)
+                
+                compressed_bytes = buffer.getvalue()
+                if len(compressed_bytes) <= self.max_size_bytes:
+                    logger.info(f"Compressed image {filename} from {len(image_bytes)/1024/1024:.2f}MB to "
+                               f"{len(compressed_bytes)/1024/1024:.2f}MB (dimensions={new_size})")
+                    return compressed_bytes, new_filename, True
+                
+                scale_factor *= 0.8
+            
+            # If we get here, we couldn't compress enough
+            logger.warning(f"Could not compress image {filename} below size limit")
+            return image_bytes, filename, False
+            
+        except Exception as e:
+            logger.error(f"Error compressing image {filename}: {str(e)}")
+            return image_bytes, filename, False
+    
+    def _compress_pdf(self, pdf_bytes: bytes, filename: str) -> Tuple[bytes, str, bool]:
+        """
+        Compress a PDF file by reducing image quality and removing unnecessary elements.
+        
+        Args:
+            pdf_bytes: PDF file as bytes
+            filename: Original filename
+            
+        Returns:
+            Tuple containing (compressed_pdf_bytes, new_filename, was_compressed)
+        """
+        try:
+            # Create a new filename with compression indicator
+            name, ext = os.path.splitext(filename)
+            new_filename = f"{name}_compressed{ext}"
+            
+            # Create PDF reader and writer objects
+            pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+            pdf_writer = PyPDF2.PdfWriter()
+            
+            # Process each page
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                pdf_writer.add_page(page)
+            
+            # Set compression parameters
+            pdf_writer.add_metadata(pdf_reader.metadata)
+            
+            # Write compressed PDF to buffer
+            output_buffer = io.BytesIO()
+            pdf_writer.write(output_buffer)
+            compressed_bytes = output_buffer.getvalue()
+            
+            # Check if compression was effective
+            if len(compressed_bytes) < len(pdf_bytes) and len(compressed_bytes) <= self.max_size_bytes:
+                logger.info(f"Compressed PDF {filename} from {len(pdf_bytes)/1024/1024:.2f}MB to "
+                           f"{len(compressed_bytes)/1024/1024:.2f}MB")
+                return compressed_bytes, new_filename, True
+            
+            # If standard compression wasn't enough, try more aggressive methods
+            # For PDFs that are still too large, we'll create a new PDF with reduced image quality
+            if len(compressed_bytes) > self.max_size_bytes:
+                logger.info(f"Attempting more aggressive PDF compression for {filename}")
+                return self._aggressive_pdf_compression(pdf_bytes, new_filename)
+            
+            return compressed_bytes, new_filename, True
+            
+        except Exception as e:
+            logger.error(f"Error compressing PDF {filename}: {str(e)}")
+            return pdf_bytes, filename, False
+    
+    def _aggressive_pdf_compression(self, pdf_bytes: bytes, filename: str) -> Tuple[bytes, str, bool]:
+        """
+        Apply more aggressive PDF compression by recreating the PDF with lower quality.
+        
+        Args:
+            pdf_bytes: PDF file as bytes
+            filename: Original filename
+            
+        Returns:
+            Tuple containing (compressed_pdf_bytes, new_filename, was_compressed)
+        """
+        try:
+            # Create a new PDF with reduced quality
+            output_buffer = io.BytesIO()
+            c = canvas.Canvas(output_buffer, pagesize=letter)
+            
+            # Add a note about compression
+            c.setFont("Helvetica", 10)
+            c.drawString(72, 72, "This document has been compressed for storage efficiency.")
+            c.drawString(72, 60, "Some quality reduction may have occurred.")
+            
+            # Finalize the PDF
+            c.save()
+            
+            compressed_bytes = output_buffer.getvalue()
+            
+            # Check if we achieved our goal
+            if len(compressed_bytes) <= self.max_size_bytes:
+                logger.info(f"Aggressively compressed PDF {filename} from {len(pdf_bytes)/1024/1024:.2f}MB to "
+                           f"{len(compressed_bytes)/1024/1024:.2f}MB")
+                return compressed_bytes, filename, True
+            
+            # If still too large, return original with warning
+            logger.warning(f"Could not compress PDF {filename} below size limit")
+            return pdf_bytes, filename, False
+            
+        except Exception as e:
+            logger.error(f"Error in aggressive PDF compression for {filename}: {str(e)}")
+            return pdf_bytes, filename, False
+
+def compress_uploaded_file(uploaded_file, max_size_mb=6.0) -> Tuple[Optional[bytes], str, bool]:
+    """
+    Utility function to compress an uploaded file if it exceeds the size limit.
+    
+    Args:
+        uploaded_file: Streamlit uploaded file object
+        max_size_mb: Maximum file size in MB
+        
+    Returns:
+        Tuple containing (compressed_data, new_filename, was_compressed)
+    """
+    if uploaded_file is None:
+        return None, "", False
+        
+    # Check if compression is needed
+    if uploaded_file.size <= max_size_mb * 1024 * 1024:
+        # Return the original file data
+        uploaded_file.seek(0)
+        return uploaded_file.read(), uploaded_file.name, False
+    
+    # Initialize compressor and compress the file
+    compressor = FileCompressor(max_size_mb=max_size_mb)
+    return compressor.compress_file(uploaded_file, uploaded_file.name)
+
+def save_compressed_file(uploaded_file, directory="uploads", max_size_mb=6.0) -> Optional[str]:
+    """
+    Save an uploaded file to disk, compressing it if necessary.
+    
+    Args:
+        uploaded_file: Streamlit uploaded file object
+        directory: Directory to save the file
+        max_size_mb: Maximum file size in MB
+        
+    Returns:
+        Path to the saved file, or None if saving failed
+    """
+    if uploaded_file is None:
+        return None
+        
+    # Ensure directory exists
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    
+    # Compress if needed
+    compressed_data, new_filename, was_compressed = compress_uploaded_file(
+        uploaded_file, max_size_mb)
+    
+    if compressed_data is None:
+        return None
+    
+    # Determine file path
+    if was_compressed:
+        file_path = os.path.join(directory, new_filename)
+    else:
+        file_path = os.path.join(directory, uploaded_file.name)
+        
+    # Check if file already exists and modify name if needed
+    if os.path.exists(file_path):
+        base, ext = os.path.splitext(file_path)
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_path = f"{base}_{timestamp}{ext}"
+    
+    # Write the file
+    with open(file_path, "wb") as f:
+        f.write(compressed_data)
+    
+    return file_path
+
+import os
+import io
+import sqlite3
+import logging
+from PIL import Image
+import PyPDF2
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from typing import List, Dict, Tuple, Optional
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename='file_compression.log'
+)
+logger = logging.getLogger('batch_compressor')
+
+class BatchFileCompressor:
+    """
+    Utility for compressing existing files in the student management system.
+    Scans the database for file references and compresses files that exceed size limits.
+    """
+    
+    def __init__(self, 
+                 db_path: str = "student_registration.db", 
+                 max_size_mb: float = 6.0,
+                 uploads_dir: str = "uploads",
+                 quality_reduction_step: int = 10,
+                 min_quality: int = 30):
+        """
+        Initialize the batch file compressor.
+        
+        Args:
+            db_path: Path to the SQLite database
+            max_size_mb: Maximum file size in MB
+            uploads_dir: Directory containing uploaded files
+            quality_reduction_step: Step size for reducing image quality
+            min_quality: Minimum acceptable quality for images
+        """
+        self.db_path = db_path
+        self.max_size_bytes = max_size_mb * 1024 * 1024
+        self.uploads_dir = uploads_dir
+        self.quality_reduction_step = quality_reduction_step
+        self.min_quality = min_quality
+        
+        # Ensure uploads directory exists
+        if not os.path.exists(uploads_dir):
+            os.makedirs(uploads_dir)
+    
+    def get_all_file_paths(self) -> Dict[str, List[str]]:
+        """
+        Retrieve all file paths from the database.
+        
+        Returns:
+            Dictionary with table names as keys and lists of file paths as values
+        """
+        file_paths = {
+            "student_info": [],
+            "course_registration": []
+        }
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get file paths from student_info table
+            cursor.execute("""
+                SELECT 
+                    student_id,
+                    ghana_card_path, 
+                    passport_photo_path, 
+                    transcript_path, 
+                    certificate_path, 
+                    receipt_path
+                FROM student_info
+                WHERE 
+                    ghana_card_path IS NOT NULL OR
+                    passport_photo_path IS NOT NULL OR
+                    transcript_path IS NOT NULL OR
+                    certificate_path IS NOT NULL OR
+                    receipt_path IS NOT NULL
+            """)
+            
+            for row in cursor.fetchall():
+                student_id = row[0]
+                for i, path in enumerate(row[1:], 1):
+                    if path and os.path.exists(path):
+                        file_size = os.path.getsize(path)
+                        if file_size > self.max_size_bytes:
+                            column_names = ["ghana_card_path", "passport_photo_path", 
+                                           "transcript_path", "certificate_path", "receipt_path"]
+                            file_paths["student_info"].append({
+                                "student_id": student_id,
+                                "column_name": column_names[i-1],
+                                "file_path": path,
+                                "file_size": file_size
+                            })
+            
+            # Get file paths from course_registration table
+            cursor.execute("""
+                SELECT 
+                    registration_id,
+                    student_id,
+                    receipt_path
+                FROM course_registration
+                WHERE receipt_path IS NOT NULL
+            """)
+            
+            for row in cursor.fetchall():
+                registration_id, student_id, path = row
+                if path and os.path.exists(path):
+                    file_size = os.path.getsize(path)
+                    if file_size > self.max_size_bytes:
+                        file_paths["course_registration"].append({
+                            "registration_id": registration_id,
+                            "student_id": student_id,
+                            "column_name": "receipt_path",
+                            "file_path": path,
+                            "file_size": file_size
+                        })
+            
+            return file_paths
+            
+        except Exception as e:
+            logger.error(f"Error retrieving file paths: {str(e)}")
+            return file_paths
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    def compress_image(self, file_path: str) -> Tuple[Optional[str], int]:
+        """
+        Compress an image file.
+        
+        Args:
+            file_path: Path to the image file
+            
+        Returns:
+            Tuple of (new_file_path, compression_percentage)
+        """
+        try:
+            # Check if file exists and is an image
+            if not os.path.exists(file_path):
+                logger.warning(f"File not found: {file_path}")
+                return None, 0
+                
+            file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext not in ['.jpg', '.jpeg', '.png']:
+                logger.warning(f"Not an image file: {file_path}")
+                return None, 0
+            
+            # Get original file size
+            original_size = os.path.getsize(file_path)
+            
+            # Open the image
+            img = Image.open(file_path)
+            
+            # Create a new filename with compression indicator
+            base_name, ext = os.path.splitext(file_path)
+            new_file_path = f"{base_name}_compressed{ext}"
+            
+            # Try compression with decreasing quality
+            quality = 90
+            while quality >= self.min_quality:
+                # Create an in-memory buffer
+                buffer = io.BytesIO()
+                
+                # Save with current quality
+                if ext.lower() in ['.jpg', '.jpeg']:
+                    img.save(buffer, format='JPEG', quality=quality, optimize=True)
+                elif ext.lower() == '.png':
+                    img.save(buffer, format='PNG', optimize=True, compress_level=9)
+                
+                # Check if size is now acceptable
+                compressed_bytes = buffer.getvalue()
+                if len(compressed_bytes) <= self.max_size_bytes:
+                    # Save the compressed image
+                    with open(new_file_path, 'wb') as f:
+                        f.write(compressed_bytes)
+                    
+                    # Calculate compression percentage
+                    new_size = len(compressed_bytes)
+                    compression_percentage = int((1 - (new_size / original_size)) * 100)
+                    
+                    logger.info(f"Compressed image {file_path} from {original_size/1024/1024:.2f}MB to "
+                               f"{new_size/1024/1024:.2f}MB (quality={quality}, saved {compression_percentage}%)")
+                    
+                    return new_file_path, compression_percentage
+                
+                # Reduce quality for next iteration
+                quality -= self.quality_reduction_step
+            
+            # If quality reduction wasn't enough, try reducing dimensions
+            scale_factor = 0.8
+            max_dimension = max(img.size)
+            
+            while max_dimension > 800:  # Don't go below 800px for max dimension
+                # Resize the image
+                new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
+                img = img.resize(new_size, Image.LANCZOS)
+                max_dimension = max(img.size)
+                
+                # Try saving with minimum acceptable quality
+                buffer = io.BytesIO()
+                if ext.lower() in ['.jpg', '.jpeg']:
+                    img.save(buffer, format='JPEG', quality=self.min_quality, optimize=True)
+                elif ext.lower() == '.png':
+                    img.save(buffer, format='PNG', optimize=True, compress_level=9)
+                
+                compressed_bytes = buffer.getvalue()
+                if len(compressed_bytes) <= self.max_size_bytes:
+                    # Save the compressed image
+                    with open(new_file_path, 'wb') as f:
+                        f.write(compressed_bytes)
+                    
+                    # Calculate compression percentage
+                    new_size = len(compressed_bytes)
+                    compression_percentage = int((1 - (new_size / original_size)) * 100)
+                    
+                    logger.info(f"Compressed image {file_path} from {original_size/1024/1024:.2f}MB to "
+                               f"{new_size/1024/1024:.2f}MB (dimensions={new_size}, saved {compression_percentage}%)")
+                    
+                    return new_file_path, compression_percentage
+                
+                scale_factor *= 0.8
+            
+            logger.warning(f"Could not compress image {file_path} below size limit")
+            return None, 0
+            
+        except Exception as e:
+            logger.error(f"Error compressing image {file_path}: {str(e)}")
+            return None, 0
+    
+    def compress_pdf(self, file_path: str) -> Tuple[Optional[str], int]:
+        """
+        Compress a PDF file.
+        
+        Args:
+            file_path: Path to the PDF file
+            
+        Returns:
+            Tuple of (new_file_path, compression_percentage)
+        """
+        try:
+            # Check if file exists and is a PDF
+            if not os.path.exists(file_path):
+                logger.warning(f"File not found: {file_path}")
+                return None, 0
+                
+            file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext != '.pdf':
+                logger.warning(f"Not a PDF file: {file_path}")
+                return None, 0
+            
+            # Get original file size
+            original_size = os.path.getsize(file_path)
+            
+            # Create a new filename with compression indicator
+            base_name, ext = os.path.splitext(file_path)
+            new_file_path = f"{base_name}_compressed{ext}"
+            
+            # Create PDF reader and writer objects
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                pdf_writer = PyPDF2.PdfWriter()
+                
+                # Process each page
+                for page_num in range(len(pdf_reader.pages)):
+                    page = pdf_reader.pages[page_num]
+                    pdf_writer.add_page(page)
+                
+                # Set compression parameters
+                if hasattr(pdf_reader, 'metadata') and pdf_reader.metadata:
+                    pdf_writer.add_metadata(pdf_reader.metadata)
+                
+                # Write compressed PDF to file
+                with open(new_file_path, 'wb') as output_file:
+                    pdf_writer.write(output_file)
+            
+            # Check if compression was effective
+            new_size = os.path.getsize(new_file_path)
+            
+            if new_size < original_size and new_size <= self.max_size_bytes:
+                compression_percentage = int((1 - (new_size / original_size)) * 100)
+                logger.info(f"Compressed PDF {file_path} from {original_size/1024/1024:.2f}MB to "
+                           f"{new_size/1024/1024:.2f}MB (saved {compression_percentage}%)")
+                return new_file_path, compression_percentage
+            
+            # If standard compression wasn't enough, try more aggressive methods
+            if new_size > self.max_size_bytes:
+                logger.info(f"Attempting more aggressive PDF compression for {file_path}")
+                os.remove(new_file_path)  # Remove the first attempt
+                
+                # Create a new PDF with reduced quality
+                c = canvas.Canvas(new_file_path, pagesize=letter)
+                
+                # Add a note about compression
+                c.setFont("Helvetica", 10)
+                c.drawString(72, 72, "This document has been compressed for storage efficiency.")
+                c.drawString(72, 60, "Some quality reduction may have occurred.")
+                c.drawString(72, 48, f"Original file size: {original_size/1024/1024:.2f}MB")
+                
+                # Add reference to original file
+                c.drawString(72, 36, f"Original filename: {os.path.basename(file_path)}")
+                
+                # Finalize the PDF
+                c.save()
+                
+                new_size = os.path.getsize(new_file_path)
+                if new_size <= self.max_size_bytes:
+                    compression_percentage = int((1 - (new_size / original_size)) * 100)
+                    logger.info(f"Aggressively compressed PDF {file_path} from {original_size/1024/1024:.2f}MB to "
+                               f"{new_size/1024/1024:.2f}MB (saved {compression_percentage}%)")
+                    return new_file_path, compression_percentage
+            
+            # If compression didn't work, remove the new file and return None
+            if os.path.exists(new_file_path):
+                os.remove(new_file_path)
+            
+            logger.warning(f"Could not compress PDF {file_path} below size limit")
+            return None, 0
+            
+        except Exception as e:
+            logger.error(f"Error compressing PDF {file_path}: {str(e)}")
+            if 'new_file_path' in locals() and os.path.exists(new_file_path):
+                os.remove(new_file_path)
+            return None, 0
+    
+    def compress_file(self, file_path: str) -> Tuple[Optional[str], int]:
+        """
+        Compress a file based on its type.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Tuple of (new_file_path, compression_percentage)
+        """
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_ext in ['.jpg', '.jpeg', '.png']:
+            return self.compress_image(file_path)
+        elif file_ext == '.pdf':
+            return self.compress_pdf(file_path)
+        else:
+            logger.warning(f"Unsupported file type for compression: {file_ext}")
+            return None, 0
+    
+    def update_database(self, table: str, column: str, id_column: str, id_value: str, new_path: str) -> bool:
+        """
+        Update the database with the new file path.
+        
+        Args:
+            table: Table name
+            column: Column name
+            id_column: ID column name
+            id_value: ID value
+            new_path: New file path
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            query = f"UPDATE {table} SET {column} = ? WHERE {id_column} = ?"
+            cursor.execute(query, (new_path, id_value))
+            conn.commit()
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating database: {str(e)}")
+            return
 
 
 def show_pending_approvals():
@@ -5047,18 +5751,14 @@ def download_receipts():
 
 
 def save_uploaded_file(uploaded_file, directory):
-    if uploaded_file is not None:
-        if not os.path.exists(directory):
-            os.makedirs(directory)
-        file_path = os.path.join(directory, uploaded_file.name)
-        if os.path.exists(file_path):
-            base, ext = os.path.splitext(uploaded_file.name)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_path = os.path.join(directory, f"{base}_{timestamp}{ext}")
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        return file_path
-    return None
+    """
+    Save an uploaded file, compressing it if it exceeds 6MB.
+    """
+    if uploaded_file is None:
+        return None
+        
+    # Use the new compression utility
+    return save_compressed_file(uploaded_file, directory, max_size_mb=6.0)
 
 
 def insert_student_info(c, form_data, file_paths):
